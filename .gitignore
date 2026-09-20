@@ -9,6 +9,17 @@ qdrant_db/
 markdown_docs/
 parent_store/
 docs/
+uploads/
+models/
+
+# Local source/test documents and model weights
+*.pdf
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
 
 notebooks/output.csv
 
