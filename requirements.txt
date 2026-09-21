@@ -1,3 +1,4 @@
+fastapi==0.141.1
 fastembed==0.8.0
 gradio==6.26.0
 ipykernel==7.3.0
@@ -8,9 +9,11 @@ langchain-text-splitters==1.1.2
 langfuse==4.15.1
 langgraph==1.2.11
 matplotlib==3.11.1
+pydantic==2.13.5
 pymupdf4llm==1.28.2
 python-dotenv==1.2.3
 ragas==0.4.3
 seaborn==0.13.2
 sentence-transformers==6.0.0
 tiktoken==0.14.0
+uvicorn==0.52.4
