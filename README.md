@@ -1,3 +1,20 @@
+# KnowFlow
+
+KnowFlow is a personal AI application engineering project built as a transparent secondary development of [GiovanniPasq/agentic-rag-for-dummies](https://github.com/GiovanniPasq/agentic-rag-for-dummies).
+
+## Source and contribution boundary
+
+- **Upstream baseline:** `2461e5251c6b9a6be71d13176ab43301f3c0a068`
+- **License:** MIT; the original `LICENSE` and copyright notice are preserved.
+- **Upstream capabilities:** PDF-to-Markdown conversion, parent-child chunking, hybrid retrieval, query rewriting and clarification, parallel multi-question processing, context compression, and the LangGraph RAG workflow.
+- **KnowFlow additions so far:** repository safety rules, an independent FastAPI application factory, typed `GET /health`, explicit runtime/test dependencies, and automated health endpoint testing.
+
+The clean repository history records the upstream source tree as an explicit import commit, followed by KnowFlow-only changes. The original upstream Git history remains available in the [source repository](https://github.com/GiovanniPasq/agentic-rag-for-dummies).
+
+> The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
+
+---
+
 <p align="center">
   <img alt="Agentic RAG for Dummies Logo" src="assets/logo.png" width="350px">
 </p>
