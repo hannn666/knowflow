@@ -28,12 +28,17 @@ class RAGSystem:
             model=config.LLM_MODEL,
             temperature=config.LLM_TEMPERATURE,
             seed=config.LLM_SEED,
+            client_kwargs={"trust_env": False},
         )
         tools = ToolFactory(collection).create_tools()
         self.agent_graph = create_agent_graph(llm, tools)
 
-    def get_config(self):
-        cfg = {"configurable": {"thread_id": self.thread_id}, "recursion_limit": self.recursion_limit}
+    def get_config(self, thread_id: str | None = None) -> dict:
+        active_thread_id = thread_id if thread_id is not None else self.thread_id
+        cfg = {
+            "configurable": {"thread_id": active_thread_id},
+            "recursion_limit": self.recursion_limit,
+        }
         handler = self.observability.get_handler()
         if handler:
             cfg["callbacks"] = [handler]
