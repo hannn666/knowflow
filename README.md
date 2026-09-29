@@ -7,9 +7,22 @@ KnowFlow is a personal AI application engineering project built as a transparent
 - **Upstream baseline:** `2461e5251c6b9a6be71d13176ab43301f3c0a068`
 - **License:** MIT; the original `LICENSE` and copyright notice are preserved.
 - **Upstream capabilities:** PDF-to-Markdown conversion, parent-child chunking, hybrid retrieval, query rewriting and clarification, parallel multi-question processing, context compression, and the LangGraph RAG workflow.
-- **KnowFlow additions so far:** repository safety rules, an independent FastAPI application factory, typed `GET /health`, explicit runtime/test dependencies, and automated health endpoint testing.
+- **KnowFlow additions so far:** repository safety rules, an independent FastAPI application factory with `GET /health` and `POST /chat` (which reuses the upstream RAG workflow), explicit runtime/test dependencies, and a local PostgreSQL setup with SQLAlchemy models and Alembic migrations for users and knowledge bases.
 
 The clean repository history records the upstream source tree as an explicit import commit, followed by KnowFlow-only changes. The original upstream Git history remains available in the [source repository](https://github.com/GiovanniPasq/agentic-rag-for-dummies).
+
+## KnowFlow local business database
+
+This slice provides PostgreSQL tables for users and knowledge bases. Registration, login, ownership authorization, and tenant-isolated RAG are not implemented yet.
+
+For Windows PowerShell, start Docker Desktop and work from the repository root. If `.env` does not exist, create it using `.env.example` as a guide and replace the placeholder with your own strong password. Never commit `.env`; do not overwrite an existing one.
+
+```powershell
+& '.\.venv\Scripts\python.exe' -m pip install -r requirements-dev.txt
+docker compose up -d --wait postgres
+& '.\.venv\Scripts\python.exe' -m alembic upgrade head
+& '.\.venv\Scripts\python.exe' -m alembic current
+```
 
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
