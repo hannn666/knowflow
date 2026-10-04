@@ -13,7 +13,7 @@ The clean repository history records the upstream source tree as an explicit imp
 
 ## KnowFlow local business database
 
-This slice provides PostgreSQL tables for users and knowledge bases. Registration, login, ownership authorization, and tenant-isolated RAG are not implemented yet.
+This slice provides PostgreSQL tables for users and knowledge bases, plus `POST /auth/register` for local account creation. Login, ownership authorization, and tenant-isolated RAG are not implemented yet.
 
 For Windows PowerShell, start Docker Desktop and work from the repository root. If `.env` does not exist, create it using `.env.example` as a guide and replace the placeholder with your own strong password. Never commit `.env`; do not overwrite an existing one.
 
@@ -23,6 +23,27 @@ docker compose up -d --wait postgres
 & '.\.venv\Scripts\python.exe' -m alembic upgrade head
 & '.\.venv\Scripts\python.exe' -m alembic current
 ```
+
+### Local registration API
+
+Start the API with `& '.\.venv\Scripts\python.exe' -m uvicorn project.api.app:create_app --factory --host 127.0.0.1 --port 8000` and open `/docs`.
+
+`POST /auth/register` accepts JSON with `email` and `password`. Emails are validated and stored in lowercase as KnowFlow account identifiers. Passwords must contain 15 to 128 characters; spaces and Unicode are accepted, and passwords are never trimmed. The server stores an Argon2id hash and returns only `id`, `email`, and `created_at` with HTTP 201. Duplicate emails return 409; invalid inputs return 422 without echoing submitted values.
+
+Registration does not log the user in or verify ownership of the email address. The explicit duplicate-email response reveals whether an account exists. This is a local development API; email verification, abuse controls, and public deployment hardening remain future work. The existing `/chat` endpoint still has no user authorization or tenant-isolated retrieval.
+
+Run the default tests with `& '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider`. Registration tests normally use a disposable in-memory SQLite database; this does not verify PostgreSQL behavior. To run the same registration cases against the migrated local PostgreSQL database:
+
+```powershell
+$env:KNOWFLOW_TEST_POSTGRES = '1'
+try {
+    & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_registration.py
+} finally {
+    Remove-Item Env:KNOWFLOW_TEST_POSTGRES
+}
+```
+
+PostgreSQL tests use unique test emails and roll back an outer transaction after each case, including application commits inside savepoints. They do not drop tables or delete existing records. Apply migrations before running them.
 
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
