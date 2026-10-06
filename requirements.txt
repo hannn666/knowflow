@@ -14,6 +14,7 @@ matplotlib==3.11.1
 psycopg[binary]==3.3.6
 pwdlib[argon2]==0.3.1
 pydantic==2.13.5
+PyJWT==2.15.1
 pymupdf4llm==1.28.2
 python-dotenv==1.2.3
 ragas==0.4.3

@@ -13,7 +13,7 @@ The clean repository history records the upstream source tree as an explicit imp
 
 ## KnowFlow local business database
 
-This slice provides PostgreSQL tables for users and knowledge bases, plus `POST /auth/register` for local account creation. Login, ownership authorization, and tenant-isolated RAG are not implemented yet.
+This slice provides PostgreSQL tables for users and knowledge bases, `POST /auth/register` for local account creation, and short-lived login credentials with `POST /auth/login` and `GET /auth/me`. Knowledge-base ownership authorization and tenant-isolated RAG are not implemented yet.
 
 For Windows PowerShell, start Docker Desktop and work from the repository root. If `.env` does not exist, create it using `.env.example` as a guide and replace the placeholder with your own strong password. Never commit `.env`; do not overwrite an existing one.
 
@@ -32,12 +32,22 @@ Start the API with `& '.\.venv\Scripts\python.exe' -m uvicorn project.api.app:cr
 
 Registration does not log the user in or verify ownership of the email address. The explicit duplicate-email response reveals whether an account exists. This is a local development API; email verification, abuse controls, and public deployment hardening remain future work. The existing `/chat` endpoint still has no user authorization or tenant-isolated retrieval.
 
-Run the default tests with `& '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider`. Registration tests normally use a disposable in-memory SQLite database; this does not verify PostgreSQL behavior. To run the same registration cases against the migrated local PostgreSQL database:
+### Local login API
+
+Generate a separate signing secret locally with `& '.\.venv\Scripts\python.exe' -c "import secrets; print(secrets.token_hex(32))"`. Add it as `KNOWFLOW_JWT_SECRET` in your existing ignored `.env`; do not overwrite other settings, reuse your database password, commit the secret, or share its output. Restart the API after changing settings. `.env.example` contains only a placeholder, which the application rejects.
+
+`POST /auth/login` accepts JSON `email` and `password`. On success it returns `access_token`, `token_type` (`bearer`), and `expires_in` (900 seconds). Send `Authorization: Bearer <access_token>` to `GET /auth/me`, which returns only the current user's `id`, `email`, and `created_at`. In `/docs`, first call login, then paste just the token into **Authorize** to try `/auth/me`. Never share token screenshots.
+
+Access tokens use PyJWT with a server-selected HS256 algorithm, required issuer/audience/subject/time claims, and a 15-minute lifetime. Signed JWT contents are readable, not encrypted; no password, password hash, or email is included. Missing, invalid, expired, or deleted-user credentials receive 401. Login failures use one message for unknown accounts and wrong passwords. Login input validation errors do not echo submitted values.
+
+There is no refresh token, logout/revocation endpoint, or per-token immediate revocation in this slice. Discarding a token on the client does not invalidate a stolen copy; it remains usable until expiry. Changing the signing key across all server processes invalidates all existing tokens. This remains local development only: HTTPS, login rate limiting, browser storage/transport strategy, and deployment hardening must be addressed before public use. `/chat` remains unauthenticated and must not be treated as tenant-isolated.
+
+Run the default tests with `& '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider`. Auth tests normally use a disposable in-memory SQLite database; this does not verify PostgreSQL behavior. Login tests inject a public test-only key, not your local signing secret. To run registration and login cases against the migrated local PostgreSQL database:
 
 ```powershell
 $env:KNOWFLOW_TEST_POSTGRES = '1'
 try {
-    & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_registration.py
+    & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_registration.py tests/test_login.py
 } finally {
     Remove-Item Env:KNOWFLOW_TEST_POSTGRES
 }

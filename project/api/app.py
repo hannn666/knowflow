@@ -23,7 +23,7 @@ def create_app(
     async def handle_validation_error(
         request: Request, error: RequestValidationError
     ) -> JSONResponse:
-        if request.url.path.rstrip("/") == "/auth/register":
+        if request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
             # Default validation errors may echo plaintext passwords in input.
             return JSONResponse(
                 status_code=422,
