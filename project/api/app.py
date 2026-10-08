@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from project.api.chat_service import ChatService, LangGraphChatService
 from project.api.auth_routes import router as auth_router
+from project.api.knowledge_base_routes import router as knowledge_base_router
 from project.api.schemas import ChatRequest, ChatResponse
 
 
@@ -18,6 +19,7 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(auth_router)
+    app.include_router(knowledge_base_router)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(

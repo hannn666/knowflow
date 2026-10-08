@@ -13,7 +13,7 @@ The clean repository history records the upstream source tree as an explicit imp
 
 ## KnowFlow local business database
 
-This slice provides PostgreSQL tables for users and knowledge bases, `POST /auth/register` for local account creation, and short-lived login credentials with `POST /auth/login` and `GET /auth/me`. Knowledge-base ownership authorization and tenant-isolated RAG are not implemented yet.
+This slice provides PostgreSQL tables for users and knowledge bases, local registration and short-lived login credentials, and owner-scoped knowledge-base creation, listing, and detail APIs. Document storage and tenant-isolated RAG are not implemented yet.
 
 For Windows PowerShell, start Docker Desktop and work from the repository root. If `.env` does not exist, create it using `.env.example` as a guide and replace the placeholder with your own strong password. Never commit `.env`; do not overwrite an existing one.
 
@@ -47,13 +47,23 @@ Run the default tests with `& '.\.venv\Scripts\python.exe' -m pytest -q -p no:ca
 ```powershell
 $env:KNOWFLOW_TEST_POSTGRES = '1'
 try {
-    & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_registration.py tests/test_login.py
+    & '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_registration.py tests/test_login.py tests/test_knowledge_bases.py
 } finally {
     Remove-Item Env:KNOWFLOW_TEST_POSTGRES
 }
 ```
 
 PostgreSQL tests use unique test emails and roll back an outer transaction after each case, including application commits inside savepoints. They do not drop tables or delete existing records. Apply migrations before running them.
+
+### Owner-scoped knowledge-base API
+
+All three endpoints require the same Bearer token as `/auth/me`:
+
+- `POST /knowledge-bases`: send only `{"name": "My knowledge base"}`; returns 201. Names are trimmed and must contain 1–200 characters. The server assigns the authenticated user as owner; client-supplied `owner_id` or `id` fields are rejected.
+- `GET /knowledge-bases`: returns only your records as an array, ordered by creation time then ID. Optional `limit` (1–100, default 50) and `offset` (nonnegative, default 0) bound the result.
+- `GET /knowledge-bases/{id}`: returns your record, or the same 404 response for a nonexistent or another user's record. Missing or invalid credentials return 401.
+
+Responses contain only `id`, `owner_id`, `name`, and `created_at`. Ownership is enforced in application database queries, not PostgreSQL row-level security. No new tables or dependencies are needed. Tests cover both directions of cross-user access, owner spoofing, authentication, validation, and pagination; they reuse the disposable SQLite / rollback-only PostgreSQL fixtures. These APIs manage metadata only: they do not isolate the existing `/chat`, Qdrant indexes, or document files. Update/delete/sharing operations are not provided in this slice.
 
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
