@@ -1,8 +1,8 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Uuid, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Uuid, func, text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -48,3 +48,53 @@ class KnowledgeBase(Base):
         server_default=func.now(),
         nullable=False,
     )
+    # Let foreign keys reject parent deletion; never null or delete children.
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="knowledge_base", passive_deletes="all",
+    )
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    knowledge_base_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("knowledge_bases.id"),
+        nullable=False, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
+    versions: Mapped[list["DocumentVersion"]] = relationship(
+        back_populates="document", passive_deletes="all",
+    )
+
+
+class DocumentVersion(Base):
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'ready', 'failed')",
+            name="ck_document_versions_status",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("documents.id"), nullable=False, index=True,
+    )
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    # ORM inserts and SQL that omits status both start pending. Explicit SQL
+    # NULL is rejected; ready describes processing, not retrieval authorization.
+    status: Mapped[str] = mapped_column(
+        String(20), default="pending", server_default=text("'pending'"), nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    document: Mapped[Document] = relationship(back_populates="versions")

@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -37,6 +37,12 @@ def db_session() -> Iterator[Session]:
             poolclass=StaticPool, hide_parameters=True,
         )
         try:
+            @event.listens_for(engine, "connect")
+            def enable_foreign_keys(connection, _):
+                cursor = connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
             Base.metadata.create_all(engine)
             with Session(engine) as session:
                 yield session

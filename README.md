@@ -65,6 +65,16 @@ All three endpoints require the same Bearer token as `/auth/me`:
 
 Responses contain only `id`, `owner_id`, `name`, and `created_at`. Ownership is enforced in application database queries, not PostgreSQL row-level security. No new tables or dependencies are needed. Tests cover both directions of cross-user access, owner spoofing, authentication, validation, and pagination; they reuse the disposable SQLite / rollback-only PostgreSQL fixtures. These APIs manage metadata only: they do not isolate the existing `/chat`, Qdrant indexes, or document files. Update/delete/sharing operations are not provided in this slice.
 
+### Document and version data foundation
+
+The schema adds `documents` (stable identity and knowledge-base membership) and `document_versions` (a separate UUID, original display filename, processing status, and creation time for each upload's content). Ownership follows the knowledge base; no owner is duplicated on documents or versions. Multiple versions and repeated filenames are allowed. Foreign keys do not cascade deletes.
+
+A database check restricts status to `pending`, `processing`, `ready`, or `failed`. Both SQLAlchemy inserts and direct SQL that omits status default to `pending`; explicit SQL NULL is rejected. UUID generation remains a Python default, so direct SQL must supply an ID. `VARCHAR(255)` limits filenames on PostgreSQL; SQLite does not enforce that length. `ready` describes processing completion, not retrieval authorization or active-version selection.
+
+This slice provides models and migration `b71d4a09e6c2`, not uploads, processing jobs, document permissions, isolated RAG, citations, or version switching. Existing development databases need a deliberate `alembic upgrade head` before using the new tables; the verification script does not migrate the business database.
+
+Run `& '.\.venv\Scripts\python.exe' tests/verify_document_schema_postgres.py` from the repository root to verify against local PostgreSQL. It uses the existing database credentials without printing them, creates a randomly named disposable database through the `postgres` maintenance database, checks upgrade/downgrade/re-upgrade and `alembic check`, then runs model, document, authentication, and knowledge-base tests using existing rollback fixtures. Finally it drops only the database it created. This requires permission to create databases. Never use downgrade to test against the business database. The default test suite uses temporary SQLite with foreign keys enabled and does not establish PostgreSQL migration correctness.
+
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
 ---
