@@ -79,7 +79,7 @@ def main() -> int:
                 "-q", "-p", "no:cacheprovider",
                 "tests/test_business_models.py", "tests/test_document_versions.py",
                 "tests/test_registration.py", "tests/test_login.py",
-                "tests/test_knowledge_bases.py",
+                "tests/test_knowledge_bases.py", "tests/test_document_api.py",
             ]))
     finally:
         if old_test_mode is None:

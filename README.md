@@ -75,6 +75,20 @@ This slice provides models and migration `b71d4a09e6c2`, not uploads, processing
 
 Run `& '.\.venv\Scripts\python.exe' tests/verify_document_schema_postgres.py` from the repository root to verify against local PostgreSQL. It uses the existing database credentials without printing them, creates a randomly named disposable database through the `postgres` maintenance database, checks upgrade/downgrade/re-upgrade and `alembic check`, then runs model, document, authentication, and knowledge-base tests using existing rollback fixtures. Finally it drops only the database it created. This requires permission to create databases. Never use downgrade to test against the business database. The default test suite uses temporary SQLite with foreign keys enabled and does not establish PostgreSQL migration correctness.
 
+### Owner-scoped PDF upload and version status
+
+`POST /knowledge-bases/{knowledge_base_id}/documents` requires a Bearer token and a multipart body containing exactly one `file`. Each upload creates a new document and first version, even for repeated filenames. Success returns HTTP 201 with `knowledge_base_id`, `document_id`, `document_version_id`, `original_filename`, `status`, and `created_at`. `pending` means the original file and metadata were saved; no parsing, indexing, or background task starts.
+
+`GET /knowledge-bases/{knowledge_base_id}/documents/{document_id}/versions/{version_id}` requires the same token. Queries match user ownership, knowledge base, document, and version together. Missing or mismatched resources and other users' records return the same 404; missing or invalid credentials return 401.
+
+Only PDFs are accepted, up to 10 MiB each. The upload route counts actual received request bytes, including multipart overhead, and rejects bodies over 11 MiB regardless of a missing or misleading Content-Length. File saving reads at most 64 KiB per call and enforces the independent 10 MiB limit. The multipart parser may spool files before application authorization; rejected requests produce no permanent business files. Extension, media type, filename, and `%PDF-` checks are basic format screening, not a claim of safe or parseable PDF contents. Parser-normalized filenames are display information only; they never determine storage paths.
+
+The default storage root is the repository's ignored `uploads/`, independent of the working directory. `KNOWFLOW_UPLOAD_ROOT` can select an absolute local root; choose an untracked location and ensure backups/access controls separately. Tests override it with isolated temporary directories. Originals use `<knowledge_base UUID>/<document UUID>/<version UUID>/source.pdf`; UUID directories are reserved exclusively, so a collision cannot overwrite an existing upload. No download or directory listing endpoint is provided.
+
+A detected pre-commit failure or explicit database constraint rejection rolls back metadata and removes only this request's reserved files. If commit acknowledgement is uncertain, files are retained because the database may have committed. Crashes or uncertain commits can leave orphan files; automatic reconciliation is not implemented. API errors do not reveal local paths or submitted field contents. No existing-document version append, active-version selection, RAG permission change, or citations are provided.
+
+For real local HTTP verification after applying migrations, run `& '.\.venv\Scripts\python.exe' tests/verify_document_upload_http.py`. It starts a temporary Uvicorn listener on localhost, uses the migrated development database, creates two randomly named test accounts, verifies upload/query and cross-user/knowledge-base denial, and cleans only those test accounts and their related records. Files use a temporary directory. It never performs a migration or a global delete. The independent PostgreSQL verifier also runs document API tests against its disposable database.
+
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
 ---

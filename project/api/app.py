@@ -8,6 +8,8 @@ from project.api.chat_service import ChatService, LangGraphChatService
 from project.api.auth_routes import router as auth_router
 from project.api.knowledge_base_routes import router as knowledge_base_router
 from project.api.schemas import ChatRequest, ChatResponse
+from project.api.document_routes import router as document_router
+from project.api.upload_limits import DocumentUploadRoute
 
 
 class HealthResponse(BaseModel):
@@ -20,13 +22,15 @@ def create_app(
     app = FastAPI()
     app.include_router(auth_router)
     app.include_router(knowledge_base_router)
+    app.include_router(document_router)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
         request: Request, error: RequestValidationError
     ) -> JSONResponse:
-        if request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
-            # Default validation errors may echo plaintext passwords in input.
+        is_upload = request.method == "POST" and isinstance(request.scope.get("route"), DocumentUploadRoute)
+        if is_upload or request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
+            # Validation errors must not echo passwords or submitted upload fields.
             return JSONResponse(
                 status_code=422,
                 content={"detail": [
