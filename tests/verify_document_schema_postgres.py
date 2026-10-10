@@ -80,6 +80,7 @@ def main() -> int:
                 "tests/test_business_models.py", "tests/test_document_versions.py",
                 "tests/test_registration.py", "tests/test_login.py",
                 "tests/test_knowledge_bases.py", "tests/test_document_api.py",
+                "tests/test_document_parser.py", "tests/test_document_parsing_service.py",
             ]))
     finally:
         if old_test_mode is None:

@@ -7,13 +7,13 @@ KnowFlow is a personal AI application engineering project built as a transparent
 - **Upstream baseline:** `2461e5251c6b9a6be71d13176ab43301f3c0a068`
 - **License:** MIT; the original `LICENSE` and copyright notice are preserved.
 - **Upstream capabilities:** PDF-to-Markdown conversion, parent-child chunking, hybrid retrieval, query rewriting and clarification, parallel multi-question processing, context compression, and the LangGraph RAG workflow.
-- **KnowFlow additions so far:** repository safety rules, an independent FastAPI application factory with `GET /health` and `POST /chat` (which reuses the upstream RAG workflow), explicit runtime/test dependencies, and a local PostgreSQL setup with SQLAlchemy models and Alembic migrations for users and knowledge bases.
+- **KnowFlow additions so far:** repository safety rules, an independent FastAPI application factory with `GET /health` and `POST /chat` (which reuses the upstream RAG workflow), explicit runtime/test dependencies, and a local PostgreSQL setup with SQLAlchemy models and Alembic migrations for users, knowledge bases, documents and versions, owner-scoped PDF upload/status APIs, and a version-scoped page-source adaptation over the existing PyMuPDF engine.
 
 The clean repository history records the upstream source tree as an explicit import commit, followed by KnowFlow-only changes. The original upstream Git history remains available in the [source repository](https://github.com/GiovanniPasq/agentic-rag-for-dummies).
 
 ## KnowFlow local business database
 
-This slice provides PostgreSQL tables for users and knowledge bases, local registration and short-lived login credentials, and owner-scoped knowledge-base creation, listing, and detail APIs. Document storage and tenant-isolated RAG are not implemented yet.
+This slice provides PostgreSQL tables for users and knowledge bases, local registration and short-lived login credentials, and owner-scoped knowledge-base creation, listing, and detail APIs. Owner-scoped original PDF storage and version status are implemented; tenant-isolated RAG is not implemented yet.
 
 For Windows PowerShell, start Docker Desktop and work from the repository root. If `.env` does not exist, create it using `.env.example` as a guide and replace the placeholder with your own strong password. Never commit `.env`; do not overwrite an existing one.
 
@@ -88,6 +88,18 @@ The default storage root is the repository's ignored `uploads/`, independent of 
 A detected pre-commit failure or explicit database constraint rejection rolls back metadata and removes only this request's reserved files. If commit acknowledgement is uncertain, files are retained because the database may have committed. Crashes or uncertain commits can leave orphan files; automatic reconciliation is not implemented. API errors do not reveal local paths or submitted field contents. No existing-document version append, active-version selection, RAG permission change, or citations are provided.
 
 For real local HTTP verification after applying migrations, run `& '.\.venv\Scripts\python.exe' tests/verify_document_upload_http.py`. It starts a temporary Uvicorn listener on localhost, uses the migrated development database, creates two randomly named test accounts, verifies upload/query and cross-user/knowledge-base denial, and cleans only those test accounts and their related records. Files use a temporary directory. It never performs a migration or a global delete. The independent PostgreSQL verifier also runs document API tests against its disposable database.
+
+### Internal version-scoped PDF parsing
+
+M4-3 adds a synchronous internal `parse_document_version` service, with no public parsing route or automatic upload trigger. The caller must supply a server-authenticated user ID (or trusted server job context), the knowledge base/document/version IDs, and trusted storage configuration. A database column query verifies the full ownership chain and reads persisted source metadata without flushing unrelated ORM edits. There is no arbitrary client path parameter.
+
+The adapter reuses the already-installed PyMuPDF 1.28.2 engine underlying the upstream PDF stack. The upstream whole-document Markdown converter returns one document rather than typed page-source records; it is retained unchanged. Extraction reads a bounded snapshot of the UUID-located original, iterates actual PDF pages with `get_text("text", sort=True)`, and returns frozen `ParsedPage` records containing `knowledge_base_id`, `document_id`, `document_version_id`, `original_filename`, 1-based physical `page_number`, and `page_text`. Physical positions are used even when the PDF has Roman or custom page labels.
+
+Blank and image-only pages remain in position with empty text. `ParsedPdf.page_count` includes them; `has_text` is false when no page has non-whitespace text. There is no OCR. Plain-text sorting is geometric and does not promise correct table/column semantics. Missing, unreadable, oversized, linked, damaged/repair-required, password-protected, or failed-page sources have explicit `PdfParsingError` codes, without source paths or full PDF contents. A page error returns no partial success; file and native-document handles close on failure. Text is omitted from normal result representations and is not logged by the adapter.
+
+Results exist only in memory: no Markdown/JSON intermediate files, database fields, processing-state writes, Qdrant calls, embeddings, or readiness changes. Parsing success does not make a version `ready` or eligible for answering. Use only this internal service with trusted identity; the lower adapter assumes its source metadata was already authorized. The original stored PDF is opened read-only and is never saved or overwritten.
+
+Run `& '.\.venv\Scripts\python.exe' -m pytest -q -p no:cacheprovider tests/test_document_parser.py tests/test_document_parsing_service.py` for real program-generated PDF tests (single/multiple pages, blanks, raster-only, Chinese, version isolation, errors, and upload-to-parse integration). The independent PostgreSQL verifier includes these cases. No private PDF fixtures are committed. No parser worker, timeout/resource sandbox, persistent parsing artifacts, chunking, or citation API is provided in this slice.
 
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
