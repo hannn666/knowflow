@@ -1,4 +1,4 @@
-﻿from io import BytesIO
+from io import BytesIO
 from uuid import uuid4
 
 import pymupdf
@@ -92,7 +92,7 @@ def test_different_versions_use_their_own_stored_files(owned_version, db_session
     assert first.status == second.status == 'pending'
 
 
-def test_no_public_parsing_route_or_rag_dependencies():
+def test_internal_parser_not_directly_exposed_or_coupled_to_rag():
     import ast
     from pathlib import Path
     from project.api.app import create_app
@@ -106,7 +106,7 @@ def test_no_public_parsing_route_or_rag_dependencies():
             if isinstance(node, ast.ImportFrom):
                 imports.append(node.module or '')
         assert not any('qdrant' in item or 'rag_agent' in item or 'document_manager' in item or 'utils' == item for item in imports)
-    assert not any('pars' in getattr(route, 'path', '') for route in create_app().routes)
+    assert not any(getattr(route, 'endpoint', None) is parse_document_version for route in create_app().routes)
 
 
 def test_existing_cross_user_and_cross_kb_records_denied(owned_version, db_session, monkeypatch):

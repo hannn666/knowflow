@@ -47,7 +47,8 @@ class PdfParsingError(Exception):
         self.page_number = page_number
 
 
-def parse_pdf_version(source: DocumentVersionSource, storage: DocumentStorage) -> ParsedPdf:
+def parse_pdf_version(source: DocumentVersionSource, storage: DocumentStorage, *,
+                      max_pages: int | None = None, max_text_characters: int | None = None) -> ParsedPdf:
     """Internal adapter: Source and the storage root must be server-controlled.
 
     Page numbers are 1-based physical PDF positions, not printed page labels.
@@ -84,12 +85,18 @@ def parse_pdf_version(source: DocumentVersionSource, storage: DocumentStorage) -
             raise PdfParsingError("invalid_pdf", "Source is not a PDF with pages")
         if pdf.needs_pass:
             raise PdfParsingError("password_required", "Password-protected PDF is unsupported")
+        if max_pages is not None and pdf.page_count > max_pages:
+            raise PdfParsingError("resource_limit", "PDF page budget exceeded")
+        total_characters = 0
         pages = []
         for index in range(pdf.page_count):
             try:
                 page_text = pdf.load_page(index).get_text("text", sort=True)
             except Exception:
                 raise PdfParsingError("text_extraction_failed", "Unable to extract PDF page text", index + 1) from None
+            total_characters += len(page_text)
+            if max_text_characters is not None and total_characters > max_text_characters:
+                raise PdfParsingError("resource_limit", "PDF text budget exceeded")
             pages.append(ParsedPage(
                 knowledge_base_id=source.knowledge_base_id, document_id=source.document_id,
                 document_version_id=source.document_version_id, original_filename=source.original_filename,

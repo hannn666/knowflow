@@ -21,7 +21,7 @@ from project.db.business_database import get_database_url
 
 
 BASE_REVISION = "a0c08f82e09f"
-DOCUMENT_REVISION = "b71d4a09e6c2"
+DOCUMENT_REVISION = "c842a9f713e0"
 
 
 def main() -> int:
@@ -66,9 +66,9 @@ def main() -> int:
             command.upgrade(config, "head")
             with test_engine.connect() as connection:
                 assert connection.scalar(text("SELECT version_num FROM alembic_version")) == DOCUMENT_REVISION
-            assert {"documents", "document_versions"} <= set(inspect(test_engine).get_table_names())
+            assert {"documents", "document_versions", "document_parse_stages"} <= set(inspect(test_engine).get_table_names())
             command.downgrade(config, BASE_REVISION)
-            assert {"documents", "document_versions"}.isdisjoint(inspect(test_engine).get_table_names())
+            assert {"documents", "document_versions", "document_parse_stages"}.isdisjoint(inspect(test_engine).get_table_names())
             with test_engine.connect() as connection:
                 assert connection.scalar(text("SELECT count(*) FROM users WHERE email = 'migration-marker@example.com'")) == 1
             command.upgrade(config, "head")
@@ -81,6 +81,8 @@ def main() -> int:
                 "tests/test_registration.py", "tests/test_login.py",
                 "tests/test_knowledge_bases.py", "tests/test_document_api.py",
                 "tests/test_document_parser.py", "tests/test_document_parsing_service.py",
+                "tests/test_parse_stage.py", "tests/test_parse_artifacts.py", "tests/test_parse_executor.py",
+                "tests/test_parse_stage_models.py", "tests/test_parse_stage_concurrency.py",
             ]))
     finally:
         if old_test_mode is None:

@@ -35,9 +35,9 @@ def main() -> None:
         identity = connection.execute(text(
             "SELECT current_database(), current_user, version_num FROM alembic_version"
         )).one()
-        if identity != ("knowflow", "knowflow", "b71d4a09e6c2"):
+        if identity[:2] != ("knowflow", "knowflow") or identity[2] not in {"b71d4a09e6c2", "c842a9f713e0"}:
             raise RuntimeError("Development database identity or migration revision mismatch")
-    print("Confirmed local development database at revision b71d4a09e6c2")
+    print("Confirmed local development database revision: " + identity[2])
     emails = [f"http-upload-{uuid4().hex}@example.com" for _ in range(2)]
     created_user_ids = []
     directory = tempfile.TemporaryDirectory(prefix="knowflow-http-upload-")

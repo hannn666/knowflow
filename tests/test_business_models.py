@@ -5,7 +5,7 @@ from project.db.business_models import Base
 
 def test_business_tables_are_registered() -> None:
     assert set(Base.metadata.tables) == {
-        "users", "knowledge_bases", "documents", "document_versions",
+        "users", "knowledge_bases", "documents", "document_versions", "document_parse_stages",
     }
 
 

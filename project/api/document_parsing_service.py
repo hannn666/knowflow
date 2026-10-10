@@ -1,4 +1,4 @@
-﻿"""Internal parsing entry point, for server-authenticated workflows only.
+"""Internal parsing entry point, for server-authenticated workflows only.
 
 No HTTP route is registered. owner_id must originate from get_current_user or a
 trusted server job, not a client-supplied owner claim. Source columns are loaded
@@ -15,8 +15,8 @@ from project.core.document_storage import DocumentStorage
 from project.db.business_models import Document, DocumentVersion, KnowledgeBase
 
 
-def parse_document_version(session: Session, owner_id: UUID, knowledge_base_id: UUID,
-                           document_id: UUID, version_id: UUID, storage: DocumentStorage) -> ParsedPdf:
+def get_authorized_parse_source(session: Session, owner_id: UUID, knowledge_base_id: UUID,
+                                document_id: UUID, version_id: UUID) -> DocumentVersionSource:
     # Column selection reads persisted source values even if ORM instances in
     # the caller's identity map are dirty. Do not flush their unrelated edits.
     with session.no_autoflush:
@@ -29,4 +29,10 @@ def parse_document_version(session: Session, owner_id: UUID, knowledge_base_id: 
         )).one_or_none()
     if source is None:
         raise DocumentNotFound
-    return parse_pdf_version(DocumentVersionSource(*source), storage)
+    return DocumentVersionSource(*source)
+
+
+def parse_document_version(session: Session, owner_id: UUID, knowledge_base_id: UUID,
+                           document_id: UUID, version_id: UUID, storage: DocumentStorage) -> ParsedPdf:
+    source = get_authorized_parse_source(session, owner_id, knowledge_base_id, document_id, version_id)
+    return parse_pdf_version(source, storage)

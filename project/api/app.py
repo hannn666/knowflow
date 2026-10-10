@@ -10,6 +10,7 @@ from project.api.knowledge_base_routes import router as knowledge_base_router
 from project.api.schemas import ChatRequest, ChatResponse
 from project.api.document_routes import router as document_router
 from project.api.upload_limits import DocumentUploadRoute
+from project.api.parse_stage_routes import router as parse_stage_router
 
 
 class HealthResponse(BaseModel):
@@ -23,13 +24,15 @@ def create_app(
     app.include_router(auth_router)
     app.include_router(knowledge_base_router)
     app.include_router(document_router)
+    app.include_router(parse_stage_router)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
         request: Request, error: RequestValidationError
     ) -> JSONResponse:
         is_upload = request.method == "POST" and isinstance(request.scope.get("route"), DocumentUploadRoute)
-        if is_upload or request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
+        is_parse_stage = 'document-parsing' in getattr(request.scope.get('route'), 'tags', [])
+        if is_upload or is_parse_stage or request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
             # Validation errors must not echo passwords or submitted upload fields.
             return JSONResponse(
                 status_code=422,

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Uuid, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -98,3 +98,33 @@ class DocumentVersion(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
     document: Mapped[Document] = relationship(back_populates="versions")
+
+
+class DocumentParseStage(Base):
+    """One authoritative parse-stage record per version; no overall-state writes."""
+    __tablename__ = "document_parse_stages"
+    __table_args__ = (
+        CheckConstraint("status IN ('running', 'succeeded', 'failed')", name="ck_parse_stage_status"),
+        CheckConstraint(
+            "(status = 'running' AND page_count IS NULL AND has_text IS NULL "
+            "AND result_sha256 IS NULL AND error_code IS NULL AND finished_at IS NULL) OR "
+            "(status = 'succeeded' AND page_count IS NOT NULL AND page_count > 0 AND has_text IS NOT NULL "
+            "AND result_sha256 IS NOT NULL AND length(result_sha256) = 64 "
+            "AND error_code IS NULL AND finished_at IS NOT NULL) OR "
+            "(status = 'failed' AND page_count IS NULL AND has_text IS NULL "
+            "AND result_sha256 IS NULL AND error_code IS NOT NULL AND finished_at IS NOT NULL)",
+            name="ck_parse_stage_result",
+        ),
+    )
+
+    document_version_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("document_versions.id"), primary_key=True,
+    )
+    attempt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'running'"))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    has_text: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    result_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
