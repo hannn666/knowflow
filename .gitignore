@@ -30,3 +30,8 @@ rag_evaluation_*.png
 notebooks/ragas_*.csv
 notebooks/rag_evaluation_*.csv
 notebooks/rag_evaluation_*.png
+
+# Isolated local verification artifacts (prefer E drive)
+.test_runs/
+# Short isolated test paths for Windows native path limits
+.t/

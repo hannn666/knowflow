@@ -85,6 +85,7 @@ def main() -> int:
                 "tests/test_parse_stage_models.py", "tests/test_parse_stage_concurrency.py",
                 "tests/test_version_chunker.py", "tests/test_chunk_artifacts.py",
                 "tests/test_document_chunking_service.py", "tests/test_document_chunker_compatibility.py",
+                "tests/test_document_indexing.py", "tests/test_version_index_server.py",
             ]))
     finally:
         if old_test_mode is None:
