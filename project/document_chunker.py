@@ -1,28 +1,36 @@
 import os
 import glob
-import config
+if __package__:
+    from . import config
+else:
+    import config
 from pathlib import Path
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 class DocumentChunker:
-    def __init__(self):
-        if config.MIN_PARENT_SIZE <= 0 or config.MAX_PARENT_SIZE < config.MIN_PARENT_SIZE:
+    def __init__(self, *, min_parent_size=None, max_parent_size=None,
+                 child_chunk_size=None, child_chunk_overlap=None, headers=None):
+        min_parent_size = config.MIN_PARENT_SIZE if min_parent_size is None else min_parent_size
+        max_parent_size = config.MAX_PARENT_SIZE if max_parent_size is None else max_parent_size
+        child_chunk_size = config.CHILD_CHUNK_SIZE if child_chunk_size is None else child_chunk_size
+        child_chunk_overlap = config.CHILD_CHUNK_OVERLAP if child_chunk_overlap is None else child_chunk_overlap
+        if min_parent_size <= 0 or max_parent_size < min_parent_size:
             raise ValueError("Parent chunk sizes must be positive and MIN_PARENT_SIZE <= MAX_PARENT_SIZE.")
-        if not 0 <= config.CHILD_CHUNK_OVERLAP < config.CHILD_CHUNK_SIZE:
+        if not 0 <= child_chunk_overlap < child_chunk_size:
             raise ValueError("CHILD_CHUNK_OVERLAP must be smaller than CHILD_CHUNK_SIZE.")
-        if config.CHILD_CHUNK_OVERLAP >= config.MAX_PARENT_SIZE:
+        if child_chunk_overlap >= max_parent_size:
             raise ValueError("CHILD_CHUNK_OVERLAP must be smaller than MAX_PARENT_SIZE.")
 
         self.__parent_splitter = MarkdownHeaderTextSplitter(
-            headers_to_split_on=config.HEADERS_TO_SPLIT_ON, 
-            strip_headers=False
+            headers_to_split_on=list(config.HEADERS_TO_SPLIT_ON if headers is None else headers),
+            strip_headers=False,
         )
         self.__child_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.CHILD_CHUNK_SIZE, 
-            chunk_overlap=config.CHILD_CHUNK_OVERLAP
+            chunk_size=child_chunk_size, chunk_overlap=child_chunk_overlap,
         )
-        self.__min_parent_size = config.MIN_PARENT_SIZE
-        self.__max_parent_size = config.MAX_PARENT_SIZE
+        self.__min_parent_size = min_parent_size
+        self.__max_parent_size = max_parent_size
+        self.__child_chunk_overlap = child_chunk_overlap
 
     @staticmethod
     def __merge_metadata(target, source, prepend=False):
@@ -55,8 +63,13 @@ class DocumentChunker:
         source_name = source_name or f"{doc_path.stem}.pdf"
         
         with open(doc_path, "r", encoding="utf-8") as f:
-            parent_chunks = self.__parent_splitter.split_text(f.read())
-        
+            content = f.read()
+        return self.create_chunks_text(content, source_id=doc_path.stem, source_name=source_name)
+
+    def create_chunks_text(self, content, *, source_id, source_name):
+        """Reuse the existing algorithm without writing a shared Markdown file."""
+        doc_path = Path(source_id)  # ID only; this method performs no filesystem IO.
+        parent_chunks = self.__parent_splitter.split_text(content)
         merged_parents = self.__merge_small_parents(parent_chunks)
         split_parents = self.__split_large_parents(merged_parents)
         cleaned_parents = self.__clean_small_chunks(split_parents)
@@ -108,7 +121,7 @@ class DocumentChunker:
             else:
                 splitter = RecursiveCharacterTextSplitter(
                     chunk_size=self.__max_parent_size,
-                    chunk_overlap=config.CHILD_CHUNK_OVERLAP
+                    chunk_overlap=self.__child_chunk_overlap
                 )
                 sub_chunks = splitter.split_documents([chunk])
                 split_chunks.extend(sub_chunks)
