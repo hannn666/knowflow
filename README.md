@@ -147,6 +147,18 @@ Run unit coverage with the repository virtualenv: `-m pytest -q -p no:cacheprovi
 
 For Windows verification, prefer an absolute short E-drive pytest directory, passed directly as `--basetemp E:/Dev/knowflow/.t/<unique-run>`. When using `PYTEST_ADDOPTS`, use forward slashes or proper quoting: unquoted backslashes are consumed by its shell-style parser. `.test_runs/` and `.t/` are Git-ignored; use a new directory per run because pytest can clear an existing basetemp. Application source-path security checks remain unchanged.
 
+### Internal version-scoped dense retrieval
+
+M4-7 adds `retrieve_document_version` in `project/api/document_retrieval_service.py`. It accepts a server-authenticated owner and an explicit knowledge-base/document/version chain, never a client collection or filter. It reuses the protected artifact read and cached embedding implementation. There is no public search route, `/chat` integration, automatic version selection, SQL write or `ready` transition.
+
+Queries must contain 1-2000 characters (not blank); top-k is an integer from 1 to 20. The collection must match the embedding specification. Before querying, all expected points must match the trusted payload, dimensions and normalization, with an exact binding-scoped count. Exact dense cosine search requires knowledge-base, document, version, parse attempt/SHA, chunk fingerprint and embedding fingerprint together. Unknown/duplicate IDs, altered payloads, invalid vectors/scores and incomplete responses are rejected. Index integrity is checked again after querying, and authorized source artifacts are reread before returning. Incomplete indexing fails closed until an explicit indexing retry succeeds; retrieval never repairs or writes points.
+
+`RetrievalResult` contains the parse binding, chunk fingerprint, embedding specification and immutable evidence. Each evidence item contains `child`, `parent` and `score`; child/parent are validated `VersionChunk` objects with source IDs, display filename, physical PDF page, stable chunk IDs and text. Text and parent relationships come from the trusted artifact, not the Qdrant response. Blank pages retain their original numbering. Cosine scores are ranking values, not confidence or an answerability/refusal guarantee.
+
+This synchronous MVP verifies the whole version (linear cost) and uses exact search. Backend calls have the configured client timeout, but model inference has no hard total request deadline. It is a checked snapshot, not a transaction across PostgreSQL, files and Qdrant: use SQL READ COMMITTED, and reauthorize/revalidate on later requests. Trusted local storage and loopback Qdrant remain deployment assumptions; privileged local tampering is outside this boundary. No sparse/hybrid search, relevance threshold, lifecycle cleanup or answer generation is included.
+
+Run `-m pytest -q tests/test_document_retrieval.py` for isolated SQLite/in-memory Qdrant with synthetic embeddings. Set process-scoped `KNOWFLOW_TEST_QDRANT=1`, `KNOWFLOW_TEST_REAL_EMBEDDING=1`, and `HF_HUB_OFFLINE=1` for `tests/test_version_retrieval_server.py`: it verifies real network filtering with higher-scoring wrong-binding decoys, an independent client, and real cached-model retrieval. The standalone PostgreSQL verifier includes both files, using only its newly created disposable database. Existing test-resource isolation and cleanup protections apply.
+
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 
 ---

@@ -86,6 +86,7 @@ def main() -> int:
                 "tests/test_version_chunker.py", "tests/test_chunk_artifacts.py",
                 "tests/test_document_chunking_service.py", "tests/test_document_chunker_compatibility.py",
                 "tests/test_document_indexing.py", "tests/test_version_index_server.py",
+                "tests/test_document_retrieval.py", "tests/test_version_retrieval_server.py",
             ]))
     finally:
         if old_test_mode is None:

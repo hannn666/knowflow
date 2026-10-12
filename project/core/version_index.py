@@ -1,4 +1,4 @@
-"""Knowledge-base-scoped Qdrant operations. No search or deletion API."""
+"""Knowledge-base-scoped Qdrant operations. Trusted internal operations; no public API or deletion capability."""
 from dataclasses import asdict
 import math
 from uuid import UUID
@@ -138,3 +138,38 @@ class VersionIndex:
             raise
         except Exception:
             raise IndexingError("index_backend_unavailable") from None
+
+    def query_verified(self, source, spec, payloads, vector, limit):
+        """Query only the verified binding; never accept a client filter/name.
+
+        Full verification before and after query fails closed on incomplete or
+        concurrently changed data. This is not a cross-store transaction.
+        """
+        self.verify(source, spec, payloads)
+        try:
+            first = next(iter(payloads.values()))["metadata"]
+            fields = ("knowledge_base_id", "document_id", "document_version_id", "parse_attempt_id",
+                      "parse_sha256", "chunking_fingerprint", "embedding_fingerprint")
+            scope = models.Filter(must=[models.FieldCondition(key="metadata." + key,
+                                   match=models.MatchValue(value=first[key])) for key in fields])
+            points = self._client.query_points(
+                collection_for(source.knowledge_base_id), query=vector, using=VECTOR_NAME,
+                query_filter=scope, search_params=models.SearchParams(exact=True),
+                limit=limit, with_payload=True, with_vectors=True,
+            ).points
+            seen = set()
+            if len(points) != min(limit, len(payloads)):
+                raise IndexingError("retrieval_verification_failed")
+            for point in points:
+                identity = str(point.id)
+                if (identity in seen or identity not in payloads
+                        or point.payload != payloads[identity] or not self._valid_vector(point, spec)
+                        or not math.isfinite(point.score)):
+                    raise IndexingError("retrieval_verification_failed")
+                seen.add(identity)
+            self.verify(source, spec, payloads)
+            return tuple((str(point.id), point.score) for point in points)
+        except IndexingError:
+            raise
+        except Exception:
+            raise IndexingError("retrieval_backend_unavailable") from None
