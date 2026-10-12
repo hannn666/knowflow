@@ -1,6 +1,7 @@
 """Knowledge-base-scoped Qdrant operations. Trusted internal operations; no public API or deletion capability."""
 from dataclasses import asdict
 import math
+import time
 from uuid import UUID
 
 from qdrant_client import QdrantClient, models
@@ -59,7 +60,17 @@ class VersionIndex:
                 # only a matching winner, never recreate or delete it.
                 if error.status_code != 409:
                     raise
-        info = self._client.get_collection(name)
+        # Concurrent creation can briefly make GET return 500 even after a
+        # 409/creation acknowledgement. Only retry this read for write setup;
+        # never recreate a collection or retry an uncertain upsert here.
+        for attempt in range(3):
+            try:
+                info = self._client.get_collection(name)
+                break
+            except UnexpectedResponse as error:
+                if not create or error.status_code != 500 or attempt == 2:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
         vectors = info.config.params.vectors
         params = vectors.get(VECTOR_NAME) if isinstance(vectors, dict) else None
         if (params is None or params.size != spec.dimension or params.distance != models.Distance.COSINE

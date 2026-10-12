@@ -200,7 +200,7 @@ def test_version_and_owner_isolation_physical_pages(retrieval_context, db_sessio
 def test_no_public_api_or_rag_coupling():
     import ast
     from project.api.app import create_app
-    paths = {getattr(route, "path", "") for route in create_app().routes}
+    paths = set(create_app().openapi()["paths"])
     assert not any("retriev" in path or "search" in path for path in paths)
     tree = ast.parse(Path(service.__file__).read_text())
     imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]

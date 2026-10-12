@@ -11,6 +11,7 @@ from project.api.schemas import ChatRequest, ChatResponse
 from project.api.document_routes import router as document_router
 from project.api.upload_limits import DocumentUploadRoute
 from project.api.parse_stage_routes import router as parse_stage_router
+from project.api.grounded_routes import router as grounded_router
 
 
 class HealthResponse(BaseModel):
@@ -25,6 +26,7 @@ def create_app(
     app.include_router(knowledge_base_router)
     app.include_router(document_router)
     app.include_router(parse_stage_router)
+    app.include_router(grounded_router)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
@@ -32,7 +34,8 @@ def create_app(
     ) -> JSONResponse:
         is_upload = request.method == "POST" and isinstance(request.scope.get("route"), DocumentUploadRoute)
         is_parse_stage = 'document-parsing' in getattr(request.scope.get('route'), 'tags', [])
-        if is_upload or is_parse_stage or request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
+        is_grounded = "document-grounded-qa" in getattr(request.scope.get("route"), "tags", [])
+        if is_upload or is_parse_stage or is_grounded or request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
             # Validation errors must not echo passwords or submitted upload fields.
             return JSONResponse(
                 status_code=422,

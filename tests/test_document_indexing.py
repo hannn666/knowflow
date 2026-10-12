@@ -192,7 +192,11 @@ def test_internal_index_has_no_public_query_or_chat_coupling():
         tree = ast.parse((root / name).read_text(encoding="utf-8"))
         imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
         assert not any("rag_agent" in item or "vector_db_manager" in item or "document_manager" in item for item in imports)
-    assert not any("index" in getattr(route, "path", "") for route in create_app().routes)
+    # M4-8 exposes only the authorized version-scoped trigger, not a generic index API.
+    paths = create_app().openapi()["paths"]
+    path = "/knowledge-bases/{knowledge_base_id}/documents/{document_id}/versions/{version_id}/index"
+    assert {name for name in paths if "index" in name} == {path}
+    assert paths[path]["post"]["security"] == [{"HTTPBearer": []}]
     assert not hasattr(VersionIndex, "search") and not hasattr(VersionIndex, "delete_collection")
 
 
@@ -321,3 +325,32 @@ def test_blank_pdf_has_no_indexable_text_or_model_backend_calls(indexing_context
         service.index_document_version(db_session, *inputs, storage, index=backend, encoder=encoder, spec=spec)
     assert error.value.code == "no_indexable_text" and encoder.calls == 0
     assert not backend._client.collection_exists(collection_for(ids[1]))
+
+
+def test_collection_readiness_retry_is_read_only_and_validates_winner(indexing_context,db_session,monkeypatch):
+    from qdrant_client.http.exceptions import UnexpectedResponse
+    _,_,_,backend,_,_,_=indexing_context
+    original=backend._client.get_collection
+    attempts=[]
+    def transient(*args,**kwargs):
+        attempts.append(True)
+        if len(attempts)<=2:
+            raise UnexpectedResponse(status_code=500,reason_phrase="Internal Server Error",content=b'{}',headers={})
+        return original(*args,**kwargs)
+    monkeypatch.setattr(backend._client,"get_collection",transient)
+    assert index(db_session,indexing_context).verified
+    assert len(attempts)>=3
+
+
+def test_persistent_collection_metadata_failure_never_writes_points(indexing_context,db_session,monkeypatch):
+    from qdrant_client.http.exceptions import UnexpectedResponse
+    ids,_,_,backend,_,_,_=indexing_context
+    attempts=[]
+    def unavailable(*args,**kwargs):
+        attempts.append(True)
+        raise UnexpectedResponse(status_code=500,reason_phrase="Internal Server Error",content=b'{}',headers={})
+    monkeypatch.setattr(backend._client,"get_collection",unavailable)
+    with pytest.raises(IndexingError,match="index_write_failed"):
+        index(db_session,indexing_context)
+    assert len(attempts)==3
+    assert backend._client.count(collection_for(ids[1]),exact=True).count==0

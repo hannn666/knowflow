@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from uuid import UUID, uuid4
 
 from project.core.document_storage import DocumentStorage
@@ -15,6 +15,22 @@ from project.core.version_chunker import (
 
 MAX_CHUNK_ARTIFACT_BYTES = 32 * 1024 * 1024
 logger = logging.getLogger(__name__)
+
+
+def _comparison_path(path):
+    """Normalize only the local DOS drive alias, after actual resolution.
+
+    ntpath.realpath can retain a Win32 extended prefix when a file appears
+    during resolution. Pure comparison removes that spelling difference; IO
+    paths and resolved symlink/junction targets are never rewritten. UNC and
+    device namespaces are intentionally left unchanged.
+    """
+    if isinstance(path, PureWindowsPath):
+        drive=path.drive
+        if (len(drive)==6 and drive[:4]=="\\\\?\\" and drive[4].upper() in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                and drive[5]==":"):
+            return PureWindowsPath(str(path)[4:])
+    return path
 
 
 class ChunkArtifactStore:
@@ -31,7 +47,7 @@ class ChunkArtifactStore:
                     break
                 if component.is_symlink() or getattr(component, "is_junction", lambda: False)():
                     raise ChunkingError("chunk_artifact_unavailable")
-            if not path.resolve().is_relative_to(self.storage.root):
+            if not _comparison_path(path.resolve()).is_relative_to(_comparison_path(self.storage.root)):
                 raise ChunkingError("chunk_artifact_unavailable")
             return path
         except (OSError, ValueError):

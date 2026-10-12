@@ -131,7 +131,7 @@ def _publish_actor(root, result, ready, output):
         saved = ChunkArtifactStore(DocumentStorage(Path(root))).publish(result)
         output.put(("ok", str(saved.children[0].chunk_id)))
     except Exception as error:
-        output.put(("failure", type(error).__name__))
+        output.put(("failure", type(error).__name__, getattr(error, "code", None)))
 
 
 def test_two_real_processes_publish_one_identical_artifact(artifact_context):
@@ -178,3 +178,49 @@ def test_existing_foreign_temporary_file_is_never_deleted(artifact_context, monk
     assert error.value.code == "chunk_artifact_write_failed"
     assert foreign.read_bytes() == b"other request owned file"
     assert not path.exists()
+
+
+def test_extended_dos_prefix_alias_keeps_real_io_and_safety(artifact_context,monkeypatch):
+    import os
+    if os.name != "nt":
+        pytest.skip("Win32 path resolution regression")
+    store,result=artifact_context
+    original_resolve=Path.resolve
+    def extended(self,*args,**kwargs):
+        resolved=original_resolve(self,*args,**kwargs)
+        if self.name=="chunks.json" and not str(resolved).startswith("\\\\?\\"):
+            return Path("\\\\?\\"+str(resolved))
+        return resolved
+    monkeypatch.setattr(Path,"resolve",extended)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results=list(pool.map(lambda _:store.publish(result),range(4)))
+    assert all(saved==result for saved in results)
+    assert store.read(result.binding,result.config)==result
+    assert len(list(store.storage.root.rglob("chunks.json")))==1
+
+
+def test_extended_prefix_does_not_admit_outside_or_device_namespace():
+    from pathlib import PureWindowsPath
+    from project.core.chunk_artifacts import _comparison_path
+    root=PureWindowsPath("E:/trusted/uploads")
+    within=PureWindowsPath("//?/E:/trusted/uploads/version/chunks.json")
+    outside=PureWindowsPath("//?/E:/outside/chunks.json")
+    device=PureWindowsPath("//?/GLOBALROOT/Device/HarddiskVolume1/trusted/uploads/chunks.json")
+    assert _comparison_path(within).is_relative_to(_comparison_path(root))
+    assert not _comparison_path(outside).is_relative_to(_comparison_path(root))
+    assert _comparison_path(device)==device
+    assert not _comparison_path(device).is_relative_to(_comparison_path(root))
+
+
+def test_resolved_outside_target_still_rejected(artifact_context,monkeypatch):
+    store,result=artifact_context
+    target=store.path_for(result.binding,result.config)
+    original=Path.resolve
+    def escaped(self,*args,**kwargs):
+        if self==target:
+            return store.storage.root.parent/'outside-owned-test'/'chunks.json'
+        return original(self,*args,**kwargs)
+    monkeypatch.setattr(Path,"resolve",escaped)
+    with pytest.raises(ChunkingError,match="chunk_artifact_unavailable"):
+        store.publish(result)
+    assert not (store.storage.root.parent/'outside-owned-test').exists()
