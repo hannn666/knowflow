@@ -15,6 +15,7 @@ models/
 
 # Local source/test documents and model weights
 *.pdf
+!frontend/tests/fixtures/public-m5.pdf
 *.gguf
 *.safetensors
 *.onnx

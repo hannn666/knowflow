@@ -26,7 +26,7 @@ export function origin() {
     throw new SafeError(503, "服务配置暂不可用");
   return url.origin;
 }
-function base() {
+export function backendBase() {
   const url = new URL(process.env.KNOWFLOW_API_URL ?? "http://127.0.0.1:8000");
   if (
     !["http:", "https:"].includes(url.protocol) ||
@@ -39,13 +39,16 @@ function base() {
     throw new SafeError(503, "服务配置暂不可用");
   return url;
 }
-export function checkWrite(request: Request) {
+export function checkOrigin(request: Request) {
   const site = request.headers.get("sec-fetch-site");
   if (
     request.headers.get("origin") !== origin() ||
     (site && site !== "same-origin")
   )
     throw new SafeError(403, "请求来源无效，请刷新页面重试");
+}
+export function checkWrite(request: Request) {
+  checkOrigin(request);
   if (
     request.headers.get("content-type")?.split(";")[0].trim() !==
     "application/json"
@@ -93,6 +96,8 @@ export function fail(status: number): never {
     403: "没有访问权限",
     404: "知识库不存在或无权访问",
     409: "操作发生冲突，请刷新后重试",
+    413: "上传内容超过大小限制",
+    415: "仅支持 PDF 文件",
     422: "输入信息不符合要求，请检查表单",
   };
   throw new SafeError(
@@ -103,7 +108,7 @@ export function fail(status: number): never {
 export async function upstream(path: string, token?: string, data?: unknown) {
   // Only callers with fixed routes and validated UUIDs may invoke this helper.
   try {
-    const response = await fetch(new URL(path, base()), {
+    const response = await fetch(new URL(path, backendBase()), {
       method: data === undefined ? "GET" : "POST",
       redirect: "error",
       cache: "no-store",

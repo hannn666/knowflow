@@ -35,6 +35,7 @@ export default defineConfig({
         : "node tests/mock-backend.mjs",
       url: "http://127.0.0.1:8107/health",
       reuseExistingServer: false,
+      timeout: 180000,
       env: { KNOWFLOW_M51_FIXTURE: "1" },
     },
     {

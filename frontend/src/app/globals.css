@@ -446,3 +446,33 @@ input {
     padding: 36px 18px;
   }
 }
+
+/* M5-2 document workspace builds on the M5-1 spacing and color system. */
+.detail-link { margin-top: 20px; }
+.document-main .eyebrow { display: block; }
+.breadcrumb { display: inline-block; color: var(--accent); margin-bottom: 12px; }
+.upload-panel { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.upload-panel p { margin-top: 4px; font-size: 12px; }
+.upload-panel form { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.upload-panel input[type="file"] { max-width: 290px; font-size: 12px; }
+.notice { margin: 16px 0; padding: 12px 16px; border-radius: 8px; background: var(--tint); color: var(--accent); }
+.document-layout { display: grid; grid-template-columns: minmax(260px, 0.9fr) minmax(360px, 1.3fr); gap: 24px; align-items: start; }
+.document-list, .version-list { display: grid; gap: 10px; }
+.document-row, .version-row { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 10px; background: white; padding: 18px; }
+.document-row span, .version-row span { color: var(--muted); font-size: 12px; }
+.document-row strong, .version-row strong { overflow-wrap: anywhere; }
+.document-row:hover, .version-row:hover, .document-row.selected, .version-row.selected { border-color: var(--accent); }
+.document-row.selected, .version-row.selected { background: var(--tint); }
+.version-panel h2 { margin: 8px 0; overflow-wrap: anywhere; }
+.version-panel > p { font-size: 12px; }
+.version-list { margin-top: 18px; }
+.stage-panel { border-top: 1px solid var(--line); margin-top: 22px; padding-top: 20px; }
+.stage-panel p { margin-top: 8px; overflow-wrap: anywhere; }
+.stage-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.secondary { background: #294d51; }
+.secondary:hover { background: #1f3a3d; }
+@media (max-width: 1050px) { .document-layout { grid-template-columns: 1fr; } .upload-panel { align-items: stretch; flex-direction: column; } }
+@media (max-width: 640px) { .upload-panel form { align-items: stretch; flex-direction: column; } .upload-panel input[type="file"] { max-width: 100%; width: 100%; } .stage-actions { flex-direction: column; align-items: stretch; } }
+
+.kb-card-main { display: block; text-align: left; background: transparent; border: 0; padding: 0; width: 100%; color: inherit; }
+.card-direct-link { display: inline-block; margin-top: 12px; color: var(--accent); font-weight: 600; }

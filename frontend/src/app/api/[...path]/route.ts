@@ -1,4 +1,5 @@
 import { uuid } from "@/lib/contracts";
+import { documentRoute } from "@/lib/document-backend";
 import {
   COOKIE,
   SafeError,
@@ -20,7 +21,10 @@ async function handle(request: Request, context: Context) {
   try {
     const parts = (await context.params).path;
     const path = parts.join("/");
-    if (request.method === "POST") checkWrite(request);
+    if (request.method === "POST" && !(parts.length === 3 && parts[2] === "documents" && uuid.test(parts[1] ?? "")) &&
+        !(parts.length === 7 && parts[2] === "documents" && parts[4] === "versions" &&
+          ["parse", "index"].includes(parts[6]) && uuid.test(parts[1] ?? "") &&
+          uuid.test(parts[3] ?? "") && uuid.test(parts[5] ?? ""))) checkWrite(request);
     if (path === "auth/logout" && request.method === "POST")
       return clear(json({ ok: true }));
     if (path === "auth/login" && request.method === "POST") {
@@ -112,6 +116,8 @@ async function handle(request: Request, context: Context) {
         throw new SafeError(409, "登录身份已变化，请刷新页面");
       return json(await kb(`/knowledge-bases/${parts[1]}`, value));
     }
+    if (parts[0] === "knowledge-bases" && uuid.test(parts[1] ?? "") && parts[2] === "documents")
+      return await documentRoute(request, parts);
     throw new SafeError(404, "接口不存在");
   } catch (e) {
     return error(e);

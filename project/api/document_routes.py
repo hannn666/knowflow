@@ -1,13 +1,16 @@
 ﻿from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from project.api.auth_dependencies import get_current_user
-from project.api.document_schemas import DocumentVersionResponse
-from project.api.document_service import DocumentNotFound, get_document_version, upload_document
+from project.api.document_schemas import DocumentListItemResponse, DocumentVersionResponse
+from project.api.document_service import (
+    DocumentNotFound, get_document_version, list_owned_documents,
+    list_owned_document_versions, upload_document,
+)
 from project.api.upload_limits import DocumentUploadRoute, NO_STORE
 from project.core.document_storage import DocumentStorage, UploadRejected, get_document_storage
 from project.db.business_database import get_database_session
@@ -50,5 +53,32 @@ def get_version(knowledge_base_id: UUID, document_id: UUID, version_id: UUID,
     response.headers.update(NO_STORE)
     try:
         return get_document_version(session, user.id, knowledge_base_id, document_id, version_id)
+    except DocumentNotFound:
+        raise not_found() from None
+
+
+@router.get("/{knowledge_base_id}/documents", response_model=list[DocumentListItemResponse])
+def list_documents(knowledge_base_id: UUID, response: Response, user: CurrentUser,
+                   session: DatabaseSession,
+                   limit: Annotated[int, Query(ge=1, le=100)] = 50,
+                   offset: Annotated[int, Query(ge=0)] = 0) -> list[DocumentListItemResponse]:
+    response.headers.update(NO_STORE)
+    try:
+        return [DocumentListItemResponse.model_validate(item) for item in
+                list_owned_documents(session, user.id, knowledge_base_id, limit, offset)]
+    except DocumentNotFound:
+        raise not_found() from None
+
+
+@router.get("/{knowledge_base_id}/documents/{document_id}/versions",
+            response_model=list[DocumentVersionResponse])
+def list_versions(knowledge_base_id: UUID, document_id: UUID, response: Response,
+                  user: CurrentUser, session: DatabaseSession,
+                  limit: Annotated[int, Query(ge=1, le=100)] = 50,
+                  offset: Annotated[int, Query(ge=0)] = 0) -> list[DocumentVersionResponse]:
+    response.headers.update(NO_STORE)
+    try:
+        return list_owned_document_versions(
+            session, user.id, knowledge_base_id, document_id, limit, offset)
     except DocumentNotFound:
         raise not_found() from None

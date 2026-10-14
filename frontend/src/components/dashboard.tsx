@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { api } from "@/lib/client";
 import type { KnowledgeBase, User } from "@/lib/contracts";
 export default function Dashboard({
@@ -120,14 +121,14 @@ export default function Dashboard({
   return (
     <div className="workspace">
       <aside className="sidebar">
-        <a className="brand" href="/knowledge-bases">
+        <Link className="brand" href="/knowledge-bases">
           KnowFlow<span>知识有出处</span>
-        </a>
+        </Link>
         <nav aria-label="主导航">
-          <a className="nav-active" href="/knowledge-bases">
+          <Link className="nav-active" href="/knowledge-bases">
             知识库
-          </a>
-          <p className="subtle nav-note">文档管理与问答将在后续切片开放。</p>
+          </Link>
+          <p className="subtle nav-note">选择知识库管理 PDF；问答将在后续切片开放。</p>
         </nav>
         <div className="account">
           <span className="avatar" aria-hidden="true">
@@ -210,19 +211,17 @@ export default function Dashboard({
           ) : (
             <div className="kb-grid">
               {items.map((item) => (
-                <button
-                  key={item.id}
-                  className="kb-card"
-                  onClick={() => void inspect(item.id)}
-                >
-                  <span className="card-label">知识库</span>
-                  <h3>{item.name}</h3>
-                  <p>
-                    创建于{" "}
-                    {new Date(item.created_at).toLocaleDateString("zh-CN")}
-                  </p>
-                  <span className="card-link">查看信息 ↗</span>
-                </button>
+                <div key={item.id} className="kb-card">
+                  <button className="kb-card-main" onClick={() => void inspect(item.id)}>
+                    <span className="card-label">知识库</span>
+                    <h3>{item.name}</h3>
+                    <p>创建于 {new Date(item.created_at).toLocaleDateString("zh-CN")}</p>
+                    <span className="card-link">查看信息 ↗</span>
+                  </button>
+                  <Link className="card-direct-link" href={`/knowledge-bases/${item.id}`} prefetch={false}>
+                    管理文档 →
+                  </Link>
+                </div>
               ))}
             </div>
           )}
@@ -251,12 +250,13 @@ export default function Dashboard({
               收起
             </button>
             <h2>{detail.name}</h2>
-            <p className="subtle">文档管理将在 M5-2 接入。</p>
+            <p className="subtle">上传 PDF，查看版本，并按步骤触发解析与索引。</p>
+            <Link className="button detail-link" href={`/knowledge-bases/${detail.id}`} prefetch={false}>进入文档管理 →</Link>
             <p className="identifier">知识库 ID：{detail.id}</p>
           </section>
         )}
         <footer className="workspace-footer">
-          内容与操作均来自你的个人账户。文档处理与问答界面尚未开放。
+          内容与操作均来自你的个人账户。问答界面尚未开放。
         </footer>
       </main>
     </div>

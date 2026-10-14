@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import Dashboard from "@/components/dashboard";
 import { SafeError, me, token, expiry } from "@/lib/backend";
@@ -15,9 +16,9 @@ export default async function Page() {
         <div className="panel">
           <h1>暂时无法连接服务</h1>
           <p>请检查后端是否已启动，然后刷新页面。</p>
-          <a className="button" href="/knowledge-bases">
+          <Link className="button" href="/knowledge-bases">
             重新连接
-          </a>
+          </Link>
         </div>
       </main>
     );

@@ -80,3 +80,48 @@ def get_document_version(session: Session, owner_id: UUID, knowledge_base_id: UU
     if version is None:
         raise DocumentNotFound
     return response_for(version, knowledge_base_id)
+
+
+def list_owned_documents(session: Session, owner_id: UUID, knowledge_base_id: UUID,
+                         limit: int, offset: int) -> list[dict]:
+    if get_owned_knowledge_base(session, owner_id, knowledge_base_id) is None:
+        raise DocumentNotFound
+    documents = list(session.scalars(
+        select(Document).where(Document.knowledge_base_id == knowledge_base_id)
+        .order_by(Document.created_at.desc(), Document.id.desc())
+        .limit(limit).offset(offset)
+    ))
+    latest = {}
+    if documents:
+        versions = session.scalars(
+            select(DocumentVersion).where(DocumentVersion.document_id.in_(
+                [document.id for document in documents]))
+            .order_by(DocumentVersion.created_at.desc(), DocumentVersion.id.desc())
+        )
+        for version in versions:
+            latest.setdefault(version.document_id, version)
+    return [
+        {"id": document.id, "knowledge_base_id": knowledge_base_id,
+         "created_at": document.created_at,
+         "latest_version": response_for(latest[document.id], knowledge_base_id)
+         if document.id in latest else None}
+        for document in documents
+    ]
+
+
+def list_owned_document_versions(session: Session, owner_id: UUID, knowledge_base_id: UUID,
+                                 document_id: UUID, limit: int, offset: int) -> list[DocumentVersionResponse]:
+    document = session.scalar(
+        select(Document).join(KnowledgeBase).where(
+            KnowledgeBase.id == knowledge_base_id, KnowledgeBase.owner_id == owner_id,
+            Document.id == document_id, Document.knowledge_base_id == knowledge_base_id,
+        )
+    )
+    if document is None:
+        raise DocumentNotFound
+    versions = session.scalars(
+        select(DocumentVersion).where(DocumentVersion.document_id == document_id)
+        .order_by(DocumentVersion.created_at.desc(), DocumentVersion.id.desc())
+        .limit(limit).offset(offset)
+    )
+    return [response_for(version, knowledge_base_id) for version in versions]
