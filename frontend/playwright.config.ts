@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 const real = process.env.M51_REAL === "1";
 export default defineConfig({
   testDir: "./tests",
-  testIgnore: "**/production/**",
+  testIgnore: ["**/production/**","**/live/**"],
   timeout: 45000,
   expect: { timeout: 12000 },
   workers: 1,

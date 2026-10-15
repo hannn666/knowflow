@@ -128,7 +128,7 @@ export default function Dashboard({
           <Link className="nav-active" href="/knowledge-bases">
             知识库
           </Link>
-          <p className="subtle nav-note">选择知识库管理 PDF；问答将在后续切片开放。</p>
+          <p className="subtle nav-note">选择知识库，管理 PDF 并查看有出处的回答。</p>
         </nav>
         <div className="account">
           <span className="avatar" aria-hidden="true">

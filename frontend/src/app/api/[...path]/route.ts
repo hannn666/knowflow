@@ -1,5 +1,6 @@
 import { uuid } from "@/lib/contracts";
 import { documentRoute } from "@/lib/document-backend";
+import { askRoute } from "@/lib/grounded-backend";
 import {
   COOKIE,
   SafeError,
@@ -116,6 +117,8 @@ async function handle(request: Request, context: Context) {
         throw new SafeError(409, "登录身份已变化，请刷新页面");
       return json(await kb(`/knowledge-bases/${parts[1]}`, value));
     }
+    if (parts.length === 7 && parts[6] === "ask" && request.method === "POST")
+      return await askRoute(request,parts);
     if (parts[0] === "knowledge-bases" && uuid.test(parts[1] ?? "") && parts[2] === "documents")
       return await documentRoute(request, parts);
     throw new SafeError(404, "接口不存在");

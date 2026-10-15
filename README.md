@@ -179,13 +179,15 @@ M4-8 regression testing also fixed two existing compatibility failures. Chunk ar
 
 No multi-turn history, whole-KB search, hybrid/re-ranking, autonomous Agent, queue, version activation/deletion, old-index cleanup or frontend is included. Parsing/indexing remain manual synchronous stages, and version `pending` continues to mean the upload is saved. M5 can build UI around parse-stage responses, verified index receipts, answers/citations/refusals and recoverable 409/503 responses.
 
-### Next.js knowledge-base and document workspace (M5-1, M5-2 in development)
+### Next.js knowledge-base, document and QA workspace (M5-1–M5-3)
 
 The isolated `frontend/` App Router application provides Chinese login, the current user's knowledge-base list/create/detail, pagination and logout. It uses a same-origin server BFF: JWT stays in a host-only HttpOnly/SameSite=Strict cookie, production cookies are Secure, mutation routes enforce a configured Origin, and private responses/fetches use no-store. Existing FastAPI/Gradio/RAG behavior is unchanged. See [frontend setup and isolated verification](frontend/README.md) for environment variables and commands.
 
-M5-2 adds protected, paginated document and version lists, PDF upload, explicit PDF parsing and version indexing controls. Upload only saves the source; the page shows the overall version status separately from the parse stage. A verified index receipt describes the current request and is never restored from a page reload. The BFF accepts bounded multipart uploads on the fixed document route and gives synchronous parse/index requests separate timeouts; an unconfirmed timeout is shown as an unknown outcome. QA and citation UI remain for M5-3.
+M5-2 adds protected, paginated document and version lists, PDF upload, explicit PDF parsing and version indexing controls. Upload only saves the source; the page shows the overall version status separately from the parse stage. A verified index receipt describes the current request and is never restored from a page reload. The BFF accepts bounded multipart uploads on the fixed document route and gives synchronous parse/index requests separate timeouts; an unconfirmed timeout is shown as an unknown outcome.
 
-Browser checks use both an explicit HTTP mock and real FastAPI/Argon2/JWT with disposable SQLite and upload storage. Neither mode implies production HTTPS verification; the real HTTP fixture does not write to the development PostgreSQL database or Qdrant.
+M5-3 adds selected-version extractive QA with expandable evidence and physical PDF page numbers. The fixed `/ask` BFF validates question limits (1,000 Unicode characters / 2,000 UTF-8 bytes), citation ownership, response size and answer-to-excerpt consistency; it rechecks authentication after a slow response. Answers remain page-local and clear on version changes or reload. `insufficient_evidence` is a normal refusal; a 409 directs the user to check the selected version/index. No question, private evidence or JWT is logged. See the [Windows startup and demonstration guide](frontend/DEMO_WINDOWS.md), including the isolated real-browser verification command.
+
+Baseline browser checks use an explicit HTTP mock or `M51_REAL` FastAPI/Argon2/JWT with disposable SQLite and upload storage. The separate M5-3 live harness uses a new PostgreSQL test database, owned UUID Qdrant collections, the existing offline Qwen cache and real Ollama. It records actual model calls and deletes only its own database, collections and uploads; it never writes development business records. These checks do not imply production HTTPS deployment verification.
 
 > The remainder of this README is the upstream project's original documentation and is retained for attribution and usage guidance.
 

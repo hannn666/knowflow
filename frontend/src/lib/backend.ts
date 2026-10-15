@@ -55,7 +55,7 @@ export function checkWrite(request: Request) {
   )
     throw new SafeError(422, "请提交有效表单");
 }
-export async function body(request: Request): Promise<Record<string, unknown>> {
+export async function body(request: Request, maximum = MAX_BODY): Promise<Record<string, unknown>> {
   const reader = request.body?.getReader();
   if (!reader) throw new SafeError(422, "请填写表单");
   const chunks: Uint8Array[] = [];
@@ -65,7 +65,7 @@ export async function body(request: Request): Promise<Record<string, unknown>> {
       const { done, value } = await reader.read();
       if (done) break;
       count += value.length;
-      if (count > MAX_BODY) {
+      if (count > maximum) {
         await reader.cancel();
         throw new SafeError(413, "表单内容过长");
       }

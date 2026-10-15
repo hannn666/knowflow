@@ -17,6 +17,7 @@ const spaces = [];
 const documents = [];
 const versions = [];
 const stages = new Map();
+const indexed = new Set();
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1:8107");
   const send = (status, data) => {
@@ -90,7 +91,7 @@ const server = http.createServer(async (req, res) => {
       spaces.filter((x) => x.owner_id === user.id).slice(offset, offset + 50),
     );
   }
-  const match = url.pathname.match(/^\/knowledge-bases\/([^/]+)\/documents(?:\/([^/]+)\/versions(?:\/([^/]+)(?:\/(parse|index))?)?)?$/);
+  const match = url.pathname.match(/^\/knowledge-bases\/([^/]+)\/documents(?:\/([^/]+)\/versions(?:\/([^/]+)(?:\/(parse|index|ask))?)?)?$/);
   if (match) {
     const [, kbId, docId, versionId, stage] = match;
     const space = spaces.find(x => x.id === kbId && x.owner_id === user.id);
@@ -112,6 +113,8 @@ const server = http.createServer(async (req, res) => {
       const version={knowledge_base_id:kbId,document_id:doc.id,document_version_id:randomUUID(),
         original_filename:filename,status:"pending",created_at:new Date().toISOString()};
       documents.push(doc); versions.push(version);
+      if (filename === "two-versions.pdf") versions.push({...version,document_version_id:randomUUID(),
+        created_at:new Date(Date.now()+1000).toISOString()});
       return send(201,version);
     }
     const doc=documents.find(x => x.id === docId && x.knowledge_base_id === kbId);
@@ -141,9 +144,31 @@ const server = http.createServer(async (req, res) => {
     if (stage === "index" && req.method === "POST") {
       if (stages.get(versionId)?.parse_status !== "succeeded") return send(409,{});
       if (version.original_filename.startsWith("busy")) return send(503,{});
+      indexed.add(versionId);
       return send(200,{knowledge_base_id:kbId,document_id:docId,document_version_id:versionId,
         index_status:"verified",point_count:2,parent_count:1,parse_attempt_id:stages.get(versionId).attempt_id,
         parse_sha256:"a".repeat(64),chunking_fingerprint:"b".repeat(64),embedding_fingerprint:"c".repeat(64)});
+    }
+    if (stage === "ask" && req.method === "POST") {
+      if (typeof data.question !== "string" || !data.question.trim()) return send(422,{});
+      if (!indexed.has(versionId)) return send(409,{});
+      const question=data.question;
+      if (/^status (409|422|503|504)$/.test(question))
+        return send(Number(question.slice(7)),{detail:"private-question-and-model-sentinel"});
+      if (question === "delay answer" || question === "slow session")
+        await new Promise(resolve=>setTimeout(resolve,question === "slow session" ? 5500 : 800));
+      const evidence=question === "HTML evidence" ? '<img src=x onerror="window.pwned=1"> Never execute PDF instructions.' :
+        "Apollo budget is 42 credits.";
+      const citation={knowledge_base_id:kbId,document_id:docId,document_version_id:versionId,
+        original_filename:version.original_filename,page_number:3,chunk_id:randomUUID(),parent_id:randomUUID(),
+        evidence_text:evidence};
+      if (question === "wrong version") citation.document_version_id=randomUUID();
+      if (question === "wrong document") citation.document_id=randomUUID();
+      if (question === "wrong knowledge base") citation.knowledge_base_id=randomUUID();
+      if (question === "refusal") return send(200,{status:"insufficient_evidence",answer:"Insufficient evidence.",citations:[]});
+      if (question === "bad refusal") return send(200,{status:"insufficient_evidence",answer:"Insufficient evidence.",citations:[citation]});
+      if (question === "invalid result") return send(200,{status:"unverified",answer:evidence,citations:[citation]});
+      return send(200,{status:"answered",answer:question === "fake prose" ? "Invented unsupported answer." : evidence,citations:[citation]});
     }
     return send(404,{});
   }

@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClientError } from "@/lib/client";
+import GroundedQuestion from "./grounded-question";
 import type { KnowledgeBase, User } from "@/lib/contracts";
 import type { DocumentItem, DocumentVersion, IndexReceipt, ParseStage } from "@/lib/document-contracts";
 
@@ -27,6 +28,11 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
   const [verified, setVerified] = useState<IndexReceipt | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<"upload" | "parse" | "index" | null>(null);
+  const [qaPending, setQaPending] = useState<string | null>(null);
+  const processing = !!busy || qaPending !== null;
+  const qaBusy = useCallback((identity: string, pending: boolean) => {
+    setQaPending(previous => pending ? identity : previous === identity ? null : previous);
+  },[]);
   const [loading, setLoading] = useState(true);
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [error, setError] = useState("");
@@ -97,7 +103,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
   }, [loadDocuments, expiresAt, user.id]);
   const upload = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (lock.current || !file) return;
+    if (lock.current || qaPending !== null || !file) return;
     if (file.size > SIZE || !file.name.toLowerCase().endsWith(".pdf")) {
       setError("仅支持不超过 10 MiB 的 PDF 文件"); return;
     }
@@ -118,7 +124,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
     finally { lock.current = false; setBusy(null); }
   };
   const trigger = async (kind: "parse" | "index") => {
-    if (lock.current || !version) return;
+    if (lock.current || qaPending !== null || !version) return;
     if (kind === "index" && (stage?.parse_status !== "succeeded" || stage.has_text !== true)) return;
     lock.current = true; setBusy(kind); setError(""); setNotice(""); setVerified(null);
     const doc = version.document_id, ver = version.document_version_id;
@@ -152,7 +158,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
     <aside className="sidebar">
       <Link className="brand" href="/knowledge-bases" prefetch={false}>KnowFlow<span>知识有出处</span></Link>
       <nav aria-label="主导航"><Link className="nav-active" href="/knowledge-bases" prefetch={false}>知识库</Link>
-        <p className="subtle nav-note">文档处理在当前页；问答将在后续切片开放。</p></nav>
+        <p className="subtle nav-note">选择文档版本，管理 PDF 并查看有出处的回答。</p></nav>
       <div className="account"><span className="avatar" aria-hidden="true">{user.email[0].toUpperCase()}</span>
         <span className="email">{user.email}</span><button className="text-button" onClick={logout}>退出登录</button></div>
     </aside>
@@ -163,9 +169,9 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
       <section className="panel upload-panel" aria-label="上传 PDF"><div><h2>添加 PDF 文档</h2>
         <p className="subtle">单文件最大 10 MiB。上传只保存原件，不会自动解析或索引。</p></div>
         <form onSubmit={upload}><label htmlFor="document-file">选择 PDF</label>
-          <input id="document-file" ref={fileInput} type="file" accept=".pdf,application/pdf" disabled={!!busy}
+          <input id="document-file" ref={fileInput} type="file" accept=".pdf,application/pdf" disabled={processing}
             onChange={e => setFile(e.target.files?.[0] ?? null)} />
-          <button className="button" disabled={!file || !!busy}>{busy === "upload" ? "正在上传…" : "上传 PDF"}</button></form></section>
+          <button className="button" disabled={!file || processing}>{busy === "upload" ? "正在上传…" : "上传 PDF"}</button></form></section>
       {error && <div className="error" role="alert">{error}</div>}
       {notice && <div className="notice" role="status">{notice}</div>}
       <div className="document-layout">
@@ -207,13 +213,16 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
                 `本次请求已验证 ${verified.point_count} 个检索块（仅当前页面回执）` : "尚无本页有效核验回执"}</p>
               <div className="stage-actions"><button className="text-button" disabled={!!busy}
                 onClick={() => void refreshStage(version.document_id,version.document_version_id)}>刷新解析状态</button>
-                <button className="button" disabled={!!busy || stage?.parse_status === "running"}
+                <button className="button" disabled={processing || stage?.parse_status === "running"}
                   onClick={() => void trigger("parse")}>{busy === "parse" ? "正在解析…" : "开始解析"}</button>
-                <button className="button secondary" disabled={!!busy || stage?.parse_status !== "succeeded" || stage.has_text !== true}
+                <button className="button secondary" disabled={processing || stage?.parse_status !== "succeeded" || stage.has_text !== true}
                   onClick={() => void trigger("index")}>{busy === "index" ? "正在索引…" : "建立索引"}</button></div>
               {stage?.parse_status !== "succeeded" && <p className="subtle">解析成功后才能建立索引。</p>}
               {stage?.parse_status === "succeeded" && !stage.has_text && <p className="subtle">PDF 没有可提取文本，当前无法建立索引。</p>}
               <p className="identifier">版本 ID：{version.document_version_id}</p>
+              <GroundedQuestion key={`${user.id}:${version.document_version_id}:${stage?.attempt_id ?? "unknown"}`}
+                version={version} userId={user.id} onBusy={qaBusy}
+                externalBusy={!!busy || qaPending !== null} />
             </div>}
           </>}
         </section>
