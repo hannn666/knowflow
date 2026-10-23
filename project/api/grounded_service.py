@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from functools import lru_cache
 import json
+import logging
 import math
 import re
 from threading import BoundedSemaphore, Lock
@@ -17,8 +18,10 @@ from project.api.document_indexing_service import index_document_version
 from project.api.document_parsing_service import get_authorized_parse_source
 from project.api.document_retrieval_service import retrieve_document_version
 from project.api.grounded_schemas import AskResponse, Citation, IndexResponse
-from project.core.grounded_llm import LLMUnavailable, get_grounded_llm, bounded_input, PromptBudgetExceeded
+from project.core.grounded_llm import get_grounded_llm, bounded_input, PromptBudgetExceeded
 from project.core.index_models import IndexingError
+
+logger = logging.getLogger(__name__)
 
 MAX_CHILDREN = 512
 MAX_INDEX_CHARACTERS = 256000
@@ -158,11 +161,16 @@ class GroundedService:
             inputs=[{"evidence_id":k,"text":v.child.text} for k,v in allowed.items()]
             bounded_input(question,inputs)
             llm=self.llm if self.llm is not None else get_grounded_llm()
+            raw=llm.generate(question,inputs)
             try:
-                raw=llm.generate(question,inputs)
-            except Exception:
-                raise LLMUnavailable from None
-            quotes=checked_quotes(raw,allowed)
+                quotes=checked_quotes(raw,allowed)
+            except QAInvalidOutput:
+                logger.info("grounded_output_invalid retry=1")
+                # Exactly one retry, with the same authorized evidence. Never
+                # feed invalid model text back into the prompt or repair quotes.
+                bounded_input(question,inputs,retry=True)
+                raw=llm.generate(question,inputs,retry=True)
+                quotes=checked_quotes(raw,allowed)
             # LLM can be slow: reauthorize and verify current source/index again.
             fresh=self.retrieve(session,owner,kb,document,version,storage,question)
             if (fresh.binding!=result.binding or fresh.chunking_fingerprint!=result.chunking_fingerprint

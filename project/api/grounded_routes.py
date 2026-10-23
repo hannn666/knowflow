@@ -1,4 +1,5 @@
 """Authenticated index/ask routes, with bounded bodies and no-store responses."""
+import logging
 from typing import Annotated
 from uuid import UUID
 
@@ -11,14 +12,16 @@ from starlette.concurrency import run_in_threadpool
 from project.api.auth_dependencies import get_current_user
 from project.api.document_service import DocumentNotFound
 from project.api.grounded_schemas import AskRequest, AskResponse, IndexResponse
-from project.api.grounded_service import GroundedService, QABusy, get_grounded_service
+from project.api.grounded_service import GroundedService, QABusy, QAInvalidOutput, get_grounded_service
 from project.api.upload_limits import NO_STORE
 from project.core.document_storage import DocumentStorage, get_document_storage
 from project.core.index_models import IndexingError
-from project.core.grounded_llm import PromptBudgetExceeded
+from project.core.grounded_llm import PromptBudgetExceeded, LLMUnavailable
 from project.core.version_chunker import ChunkingError
 from project.db.business_database import get_database_session
 from project.db.business_models import User
+
+logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 16 * 1024
 
@@ -47,6 +50,7 @@ class GroundedRoute(APIRoute):
         except Exception:
             if started:
                 raise  # Never send a second response on a broken connection.
+            logger.warning("grounded_request_failed category=dependency_or_route")
             # Includes dependency initialization failures before endpoint code.
             await JSONResponse({"detail":"Document service unavailable"},503,
                                headers=NO_STORE)(scope,receive,private_send)
@@ -65,6 +69,10 @@ def translate(error):
         return HTTPException(404,"Document resource not found",headers=NO_STORE)
     if isinstance(error,PromptBudgetExceeded):
         return HTTPException(503,"Question answering input exceeds the resource budget",headers=NO_STORE)
+    if isinstance(error,QAInvalidOutput):
+        return HTTPException(503,"Model output failed source validation",headers=NO_STORE)
+    if isinstance(error,LLMUnavailable):
+        return HTTPException(503,"Question answering model unavailable",headers=NO_STORE)
     if isinstance(error,QABusy):
         return HTTPException(503,"Document processing capacity is exhausted",headers=NO_STORE)
     if isinstance(error,ChunkingError) or (isinstance(error,IndexingError) and
@@ -83,7 +91,9 @@ async def index(knowledge_base_id:UUID,document_id:UUID,version_id:UUID,request:
     try:
         return await run_in_threadpool(service.index_version,session,user.id,knowledge_base_id,document_id,version_id,storage)
     except Exception as error:
-        raise translate(error) from None
+        translated=translate(error)
+        logger.warning("grounded_request_failed category=%s", translated.detail)
+        raise translated from None
 
 
 @router.post(PATH+"/ask",response_model=AskResponse)
@@ -92,4 +102,6 @@ async def ask(knowledge_base_id:UUID,document_id:UUID,version_id:UUID,body:AskRe
     try:
         return await run_in_threadpool(service.ask,session,user.id,knowledge_base_id,document_id,version_id,storage,body.question)
     except Exception as error:
-        raise translate(error) from None
+        translated=translate(error)
+        logger.warning("grounded_request_failed category=%s", translated.detail)
+        raise translated from None

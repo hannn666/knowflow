@@ -22,7 +22,7 @@ class ExtractiveTestLLM:
         self.override=None
         self.fail=False
 
-    def generate(self, question, evidence):
+    def generate(self, question, evidence, *, retry=False):
         self.calls.append((question,evidence))
         if self.fail:
             raise RuntimeError("private sentinel credentials")
@@ -170,6 +170,8 @@ def test_invalid_llm_cannot_produce_trusted_answer(qa_context,raw):
     r=qa_context[0].post(path+"/ask",headers=headers,json={"question":"Apollo project launch?"})
     assert r.status_code==503 and r.headers["cache-control"]=="no-store"
     assert "Invented" not in r.text and "999" not in r.text
+    assert len(qa_context[-1].calls)==2
+    assert r.json()["detail"]=="Model output failed source validation"
 
 
 def test_llm_unavailable_is_safe(qa_context):
@@ -184,6 +186,7 @@ def test_llm_can_refuse_even_after_gate(qa_context):
     qa_context[-1].override=json.dumps({"status":"insufficient_evidence","quotes":[]})
     r=qa_context[0].post(path+"/ask",headers=headers,json={"question":"Apollo project launch?"})
     assert r.status_code==200 and r.json()["status"]=="insufficient_evidence" and r.json()["citations"]==[]
+    assert len(qa_context[-1].calls)==1
 
 
 def test_prompt_injection_never_admits_foreign_context_or_model_metadata(qa_context):
@@ -392,7 +395,7 @@ def test_chinese_pdf_http_budget_and_citation_labels(qa_context,monkeypatch,coun
         with pytest.raises(PromptBudgetExceeded):
             bounded_input("项目何时启动",all_inputs)
     original=llm.generate
-    def quote_all(question,evidence):
+    def quote_all(question,evidence, *, retry=False):
         original(question,evidence)
         return json.dumps({"status":"answered","quotes":[
             {"evidence_id":e["evidence_id"],"text":e["text"][:30]} for e in evidence]})
@@ -431,3 +434,156 @@ def test_no_evidence_fits_is_private_resource_error_not_refusal(qa_context,monke
     assert response.json()=={"detail":"Question answering input exceeds the resource budget"}
     assert not qa_context[-1].calls
     assert "Apollo" not in response.text and "insufficient_evidence" not in response.text
+
+@pytest.mark.parametrize('outcome', ['success', 'invalid', 'refusal', 'foreign', 'changed'])
+def test_bounded_quote_retry(qa_context,outcome):
+    text='Nick Szabo conceptualized bit gold in 1998.'
+    headers,item,path=indexed(qa_context,texts=(text,))
+    llm=qa_context[-1]
+    calls=[]
+    def generate(question,evidence,*,retry=False):
+        calls.append((question,evidence,retry))
+        quote=text.replace('bit gold','bitgold')
+        if retry:
+            if outcome=='refusal':
+                return json.dumps({'status':'insufficient_evidence','quotes':[]})
+            if outcome in ('success','changed'):
+                quote=text
+            if outcome=='foreign':
+                quote='Other-user private sentinel content.'
+            if outcome=='changed':
+                for p in qa_context[2].root.rglob('chunks.json'):
+                    p.write_bytes(b'{changed')
+        return json.dumps({'status':'answered','quotes':[{'evidence_id':'E1','text':quote}]})
+    llm.generate=generate
+    r=qa_context[0].post(path+'/ask',headers=headers,json={'question':'Who conceptualized bit gold in 1998?'})
+    assert len(calls)==2 and [c[2] for c in calls]==[False,True]
+    assert calls[0][:2]==calls[1][:2]
+    assert r.headers['cache-control']=='no-store'
+    if outcome=='success':
+        assert r.status_code==200 and r.json()['answer']==text
+        citation=r.json()['citations'][0]
+        assert citation['evidence_text']==text and citation['page_number']==1
+        assert citation['document_version_id']==item['document_version_id']
+    elif outcome=='refusal':
+        assert r.status_code==200 and r.json()['status']=='insufficient_evidence'
+        assert r.json()['citations']==[]
+    else:
+        assert r.status_code==(409 if outcome=='changed' else 503)
+        assert 'citations' not in r.json() and 'sentinel' not in r.text and 'bitgold' not in r.text
+
+
+@pytest.mark.parametrize('kind', ['unavailable','budget','unexpected'])
+def test_model_failures_are_distinct_and_never_retried(qa_context,kind):
+    from project.core.grounded_llm import LLMUnavailable, PromptBudgetExceeded
+    headers,item,path=indexed(qa_context)
+    calls=[]
+    error={'unavailable':LLMUnavailable,'budget':PromptBudgetExceeded,'unexpected':RuntimeError}[kind]
+    def fail(*args,**kwargs):
+        calls.append(True)
+        raise error('private sentinel')
+    qa_context[-1].generate=fail
+    r=qa_context[0].post(path+'/ask',headers=headers,json={'question':'Apollo project launch?'})
+    assert r.status_code==503 and len(calls)==1
+    assert r.json()['detail']=={'unavailable':'Question answering model unavailable','budget':'Question answering input exceeds the resource budget','unexpected':'Document question answering service unavailable'}[kind]
+    assert 'sentinel' not in r.text
+
+
+def test_retry_prompt_is_bounded_and_does_not_replay_bad_output(monkeypatch):
+    import project.core.grounded_llm as module
+    payload=module.bounded_input('Apollo launch?',[{'evidence_id':'E1','text':'Apollo launched yesterday.'}])
+    size=len(payload.encode('utf-8'))+len(module.SYSTEM.encode('utf-8'))
+    monkeypatch.setattr(module,'MAX_PROMPT_BYTES',size)
+    with pytest.raises(module.PromptBudgetExceeded):
+        module.bounded_input('Apollo launch?',[{'evidence_id':'E1','text':'Apollo launched yesterday.'}],retry=True)
+    assert 'Preserve every space, newline' in module.RETRY_SYSTEM
+
+@pytest.mark.parametrize('raw', [None, ['not text'], 'x'*8001])
+def test_non_text_and_oversize_output_is_invalid(raw):
+    from project.api.grounded_service import checked_quotes, QAInvalidOutput
+    with pytest.raises(QAInvalidOutput):
+        checked_quotes(raw,{})
+
+
+def test_line_break_normalization_is_not_an_exact_quote():
+    from project.api.grounded_service import checked_quotes, QAInvalidOutput
+    source="In 1998, a\ncomputer scientist, Nick Szabo conceptualized 'bit gold'."
+    raw=json.dumps({'status':'answered','quotes':[{'evidence_id':'E1','text':source.replace('\n',' ')}]})
+    with pytest.raises(QAInvalidOutput):
+        checked_quotes(raw,{'E1':SimpleNamespace(child=SimpleNamespace(text=source))})
+
+
+@pytest.mark.parametrize('retry',[False,True])
+def test_adapter_preserves_budget_before_network(monkeypatch,retry):
+    import project.core.grounded_llm as module
+    llm=module.OllamaGroundedLLM.__new__(module.OllamaGroundedLLM)
+    monkeypatch.setattr(module,'MAX_PROMPT_BYTES',1)
+    with pytest.raises(module.PromptBudgetExceeded):
+        llm.generate('question',[],retry=retry)
+
+
+@pytest.mark.parametrize('failure',['connection','unexpected'])
+def test_adapter_only_classifies_transport_failure(monkeypatch,failure):
+    import httpx
+    import project.core.grounded_llm as module
+    llm=module.OllamaGroundedLLM.__new__(module.OllamaGroundedLLM)
+    def fail(**kwargs):
+        raise (httpx.ConnectError('private sentinel') if failure=='connection' else RuntimeError('private sentinel'))
+    monkeypatch.setattr(module.httpx,'Client',fail)
+    with pytest.raises(module.LLMUnavailable if failure=='connection' else RuntimeError):
+        llm.generate('question',[])
+
+
+def test_retry_budget_failure_does_not_invoke_second_call(qa_context,monkeypatch):
+    import project.core.grounded_llm as module
+    headers,item,path=indexed(qa_context)
+    llm=qa_context[-1]
+    def invalid(question,evidence):
+        payload=module.bounded_input(question,evidence)
+        monkeypatch.setattr(module,'MAX_PROMPT_BYTES',len(payload.encode('utf-8'))+len(module.SYSTEM.encode('utf-8')))
+        llm.calls.append(True)
+        return '{}'
+    llm.generate=invalid
+    r=qa_context[0].post(path+'/ask',headers=headers,json={'question':'Apollo project launch?'})
+    assert r.status_code==503 and r.json()['detail']=='Question answering input exceeds the resource budget'
+    assert len(llm.calls)==1
+
+
+def test_retry_schema_only_contains_exact_bounded_spans():
+    from project.core.grounded_llm import retry_format
+    evidence=[{'evidence_id':'E1','text':"In 1998, a\ncomputer scientist, Nick Szabo conceptualized 'bit gold'."},
+              {'evidence_id':'E2','text':'x'*301}]
+    schema=retry_format(evidence)
+    spans=schema['properties']['quotes']['items']['properties']['text']['enum']
+    assert all(8<=len(s)<=300 and any(s in e['text'] for e in evidence) for s in spans)
+    assert "In 1998, a computer scientist" not in spans
+    assert schema['properties']['quotes']['maxItems']==1
+    from project.core.grounded_llm import PromptBudgetExceeded
+    with pytest.raises(PromptBudgetExceeded):
+        retry_format([evidence[1]])
+
+
+def test_retry_adapter_binds_schema_and_never_replays_output(monkeypatch):
+    import project.core.grounded_llm as module
+    evidence=[{'evidence_id':'E1','text':'Nick Szabo conceptualized bit gold.'}]
+    observed={}
+    class Client:
+        def bind(self,**kwargs):
+            observed.update(kwargs)
+            return self
+        def invoke(self,messages,**kwargs):
+            observed['messages']=messages
+            return SimpleNamespace(content='{}')
+    class Tags:
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def get(self,*args): return self
+        def raise_for_status(self): pass
+        def json(self): return {'models':[{'name':module.config.LLM_MODEL}]}
+    monkeypatch.setattr(module.httpx,'Client',lambda **kwargs:Tags())
+    llm=module.OllamaGroundedLLM.__new__(module.OllamaGroundedLLM)
+    llm.client=Client()
+    assert llm.generate('Who conceptualized bit gold?',evidence,retry=True)=='{}'
+    assert observed['format']==module.retry_format(evidence)
+    assert observed['messages'][0].content==module.RETRY_SYSTEM
+    assert json.loads(observed['messages'][1].content)['evidence']==evidence
