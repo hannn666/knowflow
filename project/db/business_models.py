@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, func, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Uuid, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -128,3 +128,49 @@ class DocumentParseStage(Base):
     has_text: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     result_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = (
+        CheckConstraint("absolute_expires_at > created_at", name="ck_auth_session_absolute"),
+        CheckConstraint("idle_expires_at > created_at AND idle_expires_at <= absolute_expires_at",
+                        name="ck_auth_session_idle"),
+        CheckConstraint("(revoked_at IS NULL AND revocation_reason IS NULL) OR "
+                        "(revoked_at IS NOT NULL AND revocation_reason IS NOT NULL "
+                        "AND revocation_reason IN ('logout', 'replay'))",
+                        name="ck_auth_session_revocation"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    idle_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revocation_reason: Mapped[str | None] = mapped_column(String(16))
+
+
+class AuthRefreshToken(Base):
+    __tablename__ = "auth_refresh_tokens"
+    __table_args__ = (
+        CheckConstraint("length(token_hash) = 64", name="ck_auth_refresh_hash"),
+        CheckConstraint("expires_at > created_at", name="ck_auth_refresh_expiry"),
+        CheckConstraint("consumed_at IS NULL OR consumed_at >= created_at", name="ck_auth_refresh_consumed"),
+        Index("uq_auth_refresh_active", "session_id", unique=True,
+              postgresql_where=text("consumed_at IS NULL"), sqlite_where=text("consumed_at IS NULL")),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    session_id: Mapped[UUID] = mapped_column(
+        Uuid(), ForeignKey("auth_sessions.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    parent_token_id: Mapped[UUID | None] = mapped_column(
+        Uuid(), ForeignKey("auth_refresh_tokens.id"), unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

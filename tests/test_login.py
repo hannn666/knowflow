@@ -22,7 +22,7 @@ def token_for(user_id: str, **changes) -> str:
     now = int(datetime.now(timezone.utc).timestamp())
     claims = {
         "sub": user_id, "iat": now, "exp": now + 900,
-        "iss": "knowflow", "aud": "knowflow-api", "token_use": "access",
+        "iss": "knowflow", "aud": "knowflow-api", "token_use": "access", "sid": str(uuid4()),
     }
     claims.update(changes)
     return jwt.encode(claims, TEST_KEY, algorithm="HS256")
@@ -37,13 +37,13 @@ def test_login_then_me_returns_only_public_fields(client, credentials) -> None:
     assert login.headers["Cache-Control"] == "no-store"
     assert login.headers["Pragma"] == "no-cache"
     body = login.json()
-    assert set(body) == {"access_token", "token_type", "expires_in"}
+    assert set(body) == {"access_token", "refresh_token", "token_type", "expires_in", "session_id", "session_expires_at", "idle_expires_at"}
     assert body["token_type"] == "bearer"
     assert body["expires_in"] == 900
     assert str(auth_tokens.decode_access_token(body["access_token"])) == registered["id"]
     claims = jwt.decode(body["access_token"], TEST_KEY, algorithms=["HS256"],
                         audience="knowflow-api", issuer="knowflow")
-    assert set(claims) == {"sub", "iat", "exp", "iss", "aud", "token_use"}
+    assert set(claims) == {"sub", "sid", "iat", "exp", "iss", "aud", "token_use"}
     response = client.get("/auth/me", headers={
         "Authorization": f"Bearer {body['access_token']}",
     })
@@ -81,18 +81,22 @@ def test_invalid_claims_rejected(client, credentials, changes) -> None:
     registered = client.post("/auth/register", json=credentials).json()
     claims = {"sub": registered["id"], **changes}
     token = token_for(claims.pop("sub"), **claims)
+    with pytest.raises(jwt.InvalidTokenError):
+        auth_tokens.decode_access_identity(token)
     response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
     assert token not in response.text
 
 
-@pytest.mark.parametrize("claim", ["sub", "iat", "exp", "iss", "aud", "token_use"])
+@pytest.mark.parametrize("claim", ["sub", "sid", "iat", "exp", "iss", "aud", "token_use"])
 def test_required_claims_cannot_be_omitted(client, credentials, claim) -> None:
     registered = client.post("/auth/register", json=credentials).json()
     token = token_for(registered["id"])
     claims = jwt.decode(token, TEST_KEY, algorithms=["HS256"], audience="knowflow-api")
     claims.pop(claim)
     token = jwt.encode(claims, TEST_KEY, algorithm="HS256")
+    with pytest.raises(jwt.InvalidTokenError):
+        auth_tokens.decode_access_identity(token)
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
@@ -102,6 +106,8 @@ def test_wrong_signature_or_algorithm_rejected(client, credentials, algorithm, k
     claims = jwt.decode(token_for(registered["id"]), TEST_KEY,
                         algorithms=["HS256"], audience="knowflow-api")
     token = jwt.encode(claims, key, algorithm=algorithm)
+    with pytest.raises(jwt.InvalidTokenError):
+        auth_tokens.decode_access_identity(token)
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
@@ -141,7 +147,7 @@ def test_invalid_signing_configuration_fails_closed(monkeypatch, key) -> None:
     else:
         monkeypatch.setenv("KNOWFLOW_JWT_SECRET", key)
     with pytest.raises(RuntimeError, match="64 random hex"):
-        auth_tokens.create_access_token(uuid4())
+        auth_tokens.create_access_token(uuid4(), uuid4())
 
 
 def test_health_and_registration_do_not_need_signing_key(client, credentials, monkeypatch) -> None:

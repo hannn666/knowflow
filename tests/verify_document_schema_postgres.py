@@ -21,7 +21,7 @@ from project.db.business_database import get_database_url
 
 
 BASE_REVISION = "a0c08f82e09f"
-DOCUMENT_REVISION = "c842a9f713e0"
+DOCUMENT_REVISION = "e5d6a7b8c901"
 
 
 def main() -> int:

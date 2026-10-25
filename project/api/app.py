@@ -35,10 +35,12 @@ def create_app(
         is_upload = request.method == "POST" and isinstance(request.scope.get("route"), DocumentUploadRoute)
         is_parse_stage = 'document-parsing' in getattr(request.scope.get('route'), 'tags', [])
         is_grounded = "document-grounded-qa" in getattr(request.scope.get("route"), "tags", [])
-        if is_upload or is_parse_stage or is_grounded or request.url.path.rstrip("/") in {"/auth/register", "/auth/login"}:
+        is_auth = 'auth' in getattr(request.scope.get('route'), 'tags', [])
+        if is_upload or is_parse_stage or is_grounded or is_auth:
             # Validation errors must not echo passwords or submitted upload fields.
             return JSONResponse(
                 status_code=422,
+                headers={"Cache-Control": "no-store"} if is_auth else None,
                 content={"detail": [
                     {key: item[key] for key in ("type", "loc", "msg")}
                     for item in error.errors()

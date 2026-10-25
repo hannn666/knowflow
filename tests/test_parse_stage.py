@@ -219,7 +219,7 @@ def test_other_version_artifacts_are_independent(stage_context):
     assert client.get(path, headers=headers).json() == first
 
 
-def test_acknowledgement_loss_after_success_preserves_committed_artifact(stage_context, monkeypatch):
+def test_acknowledgement_loss_after_success_preserves_committed_artifact(stage_context, monkeypatch, business_commit_fault):
     client, session, storage, _, accounts, _, path = stage_context
     actual_commit = session.commit
     commits = 0
@@ -229,14 +229,14 @@ def test_acknowledgement_loss_after_success_preserves_committed_artifact(stage_c
         actual_commit()
         if commits == 2:
             raise RuntimeError('completion acknowledgement lost')
-    monkeypatch.setattr(session, 'commit', commit_with_lost_ack)
+    business_commit_fault(session, commit_with_lost_ack)
     assert client.post(path, headers=accounts[0][0]).status_code == 503
     assert len(list(storage.root.rglob('pages.json'))) == 1
     queried = client.get(path, headers=accounts[0][0])
     assert queried.json()['parse_status'] == 'succeeded'
 
 
-def test_unconfirmed_completion_does_not_report_success(stage_context, monkeypatch):
+def test_unconfirmed_completion_does_not_report_success(stage_context, monkeypatch, business_commit_fault):
     client, session, storage, _, accounts, _, path = stage_context
     actual_commit = session.commit
     commits = 0
@@ -246,7 +246,7 @@ def test_unconfirmed_completion_does_not_report_success(stage_context, monkeypat
         if commits == 2:
             raise RuntimeError('commit not acknowledged')
         actual_commit()
-    monkeypatch.setattr(session, 'commit', fail_completion)
+    business_commit_fault(session, fail_completion)
     assert client.post(path, headers=accounts[0][0]).status_code == 503
     assert client.get(path, headers=accounts[0][0]).json()['parse_status'] == 'running'
     assert len(list(storage.root.rglob('pages.json'))) == 1

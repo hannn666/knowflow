@@ -106,5 +106,7 @@ def test_unrelated_integrity_error_is_not_reported_as_duplicate_email(
         raise IntegrityError("test statement", {}, RuntimeError("other constraint"))
 
     monkeypatch.setattr(db_session, "commit", fail_commit)
-    with pytest.raises(IntegrityError):
-        client.post("/auth/register", json=credentials)
+    response = client.post("/auth/register", json=credentials)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Authentication service unavailable"}
+    assert "constraint" not in response.text

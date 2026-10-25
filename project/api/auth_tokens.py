@@ -1,7 +1,8 @@
-"""Short-lived access tokens; no refresh tokens or per-token revocation yet."""
+"""Short-lived access JWTs bound to a revocable server-side session."""
 
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -25,20 +26,26 @@ def get_signing_key() -> str:
     return key
 
 
-def create_access_token(user_id: UUID) -> str:
+@dataclass(frozen=True)
+class AccessIdentity:
+    user_id: UUID
+    session_id: UUID
+
+
+def create_access_token(user_id: UUID, session_id: UUID) -> str:
     now = int(datetime.now(timezone.utc).timestamp())
     return jwt.encode(
-        {"sub": str(user_id), "iat": now, "exp": now + ACCESS_TOKEN_SECONDS,
+        {"sub": str(user_id), "sid": str(session_id), "iat": now, "exp": now + ACCESS_TOKEN_SECONDS,
          "iss": _ISSUER, "aud": _AUDIENCE, "token_use": "access"},
         get_signing_key(), algorithm="HS256",
     )
 
 
-def decode_access_token(token: str) -> UUID:
+def decode_access_identity(token: str) -> AccessIdentity:
     claims = jwt.decode(
         token, get_signing_key(), algorithms=["HS256"],
         issuer=_ISSUER, audience=_AUDIENCE,
-        options={"require": ["sub", "iat", "exp", "iss", "aud", "token_use"]},
+        options={"require": ["sub", "sid", "iat", "exp", "iss", "aud", "token_use"]},
     )
     if (
         claims["token_use"] != "access"
@@ -48,6 +55,11 @@ def decode_access_token(token: str) -> UUID:
     ):
         raise jwt.InvalidTokenError("Invalid access token claims")
     try:
-        return UUID(claims["sub"])
+        return AccessIdentity(UUID(claims["sub"]), UUID(claims["sid"]))
     except (ValueError, TypeError, AttributeError):
         raise jwt.InvalidTokenError("Invalid token subject") from None
+
+
+def decode_access_token(token: str) -> UUID:
+    # Compatibility for internal callers; still requires a valid signed sid.
+    return decode_access_identity(token).user_id

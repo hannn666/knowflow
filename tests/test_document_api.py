@@ -165,14 +165,14 @@ def test_file_limit_beyond_valid_header_rejected(upload_context, db_session):
     assert not list(storage.root.rglob("*.pdf"))
 
 
-def test_known_commit_rejection_cleans_only_own_file(upload_context, db_session, monkeypatch):
+def test_known_commit_rejection_cleans_only_own_file(upload_context, db_session, monkeypatch, business_commit_fault):
     client, accounts, storage = upload_context
     headers, kb = accounts[0]
     first = post(client, headers, kb).json()
     original = storage.path_for(UUID(kb), UUID(first["document_id"]), UUID(first["document_version_id"]))
     def reject_commit():
         raise IntegrityError("test-only commit", {}, RuntimeError("rejected"))
-    monkeypatch.setattr(db_session, "commit", reject_commit)
+    business_commit_fault(db_session, reject_commit)
     response = post(client, headers, kb)
     assert response.status_code == 503
     assert original.read_bytes() == PDF
@@ -180,14 +180,14 @@ def test_known_commit_rejection_cleans_only_own_file(upload_context, db_session,
     assert db_session.scalar(select(func.count()).select_from(Document)) == 1
 
 
-def test_exception_after_successful_commit_keeps_referenced_file(upload_context, db_session, monkeypatch):
+def test_exception_after_successful_commit_keeps_referenced_file(upload_context, db_session, monkeypatch, business_commit_fault):
     client, accounts, storage = upload_context
     headers, kb = accounts[0]
     actual_commit = db_session.commit
     def ambiguous_commit():
         actual_commit()
         raise RuntimeError("lost acknowledgement")
-    monkeypatch.setattr(db_session, "commit", ambiguous_commit)
+    business_commit_fault(db_session, ambiguous_commit)
     assert post(client, headers, kb).status_code == 503
     saved = db_session.scalar(select(DocumentVersion))
     assert saved is not None
@@ -227,18 +227,18 @@ def test_upload_validation_does_not_echo_submitted_fields(upload_context):
     assert all(set(error) == {"type", "loc", "msg"} for error in response.json()["detail"])
 
 
-def test_unknown_commit_failure_retains_orphan_for_reconciliation(upload_context, db_session, monkeypatch):
+def test_unknown_commit_failure_retains_orphan_for_reconciliation(upload_context, db_session, monkeypatch, business_commit_fault):
     client, accounts, storage = upload_context
     headers, kb = accounts[0]
     def fail_commit():
         raise RuntimeError("connection result unknown")
-    monkeypatch.setattr(db_session, "commit", fail_commit)
+    business_commit_fault(db_session, fail_commit)
     assert post(client, headers, kb).status_code == 503
     assert db_session.scalar(select(func.count()).select_from(Document)) == 0
     assert len(list(storage.root.rglob("source.pdf"))) == 1
 
 
-def test_ambiguous_commit_failure_logs_without_database_reads(upload_context, db_session, monkeypatch, caplog):
+def test_ambiguous_commit_failure_logs_without_database_reads(upload_context, db_session, monkeypatch, caplog, business_commit_fault):
     from sqlalchemy import event
     client, accounts, storage = upload_context
     headers, kb = accounts[0]
@@ -259,7 +259,7 @@ def test_ambiguous_commit_failure_logs_without_database_reads(upload_context, db
             raise RuntimeError("database connection unavailable")
 
     event.listen(db_session, "do_orm_execute", deny_database_reads)
-    monkeypatch.setattr(db_session, "commit", commit_without_acknowledgement)
+    business_commit_fault(db_session, commit_without_acknowledgement)
     try:
         assert post(client, headers, kb).status_code == 503
         assert not reads_after_failure

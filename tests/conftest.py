@@ -68,3 +68,26 @@ def credentials() -> dict[str, str]:
         "email": f"auth-{uuid4().hex}@example.com",
         "password": "a long registration test phrase",
     }
+
+
+@pytest.fixture
+def business_commit_fault(monkeypatch):
+    """Fault business commits without breaking the preceding auth admission.
+
+    Authentication now commits its own short transaction before endpoint work.
+    Existing upload/parse acknowledgement-loss tests must reach that work.
+    """
+    from project.api import auth_dependencies
+
+    def install(session, fault):
+        real_commit = session.commit
+        real_check = auth_dependencies.check_session
+
+        def admission(*args, **kwargs):
+            with monkeypatch.context() as patch:
+                patch.setattr(session, "commit", real_commit)
+                return real_check(*args, **kwargs)
+
+        monkeypatch.setattr(auth_dependencies, "check_session", admission)
+        monkeypatch.setattr(session, "commit", fault)
+    return install

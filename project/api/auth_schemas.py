@@ -34,6 +34,15 @@ class LoginRequest(RegisterRequest):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
+    access_token: str = Field(repr=False)
+    refresh_token: str = Field(repr=False)
     token_type: Literal["bearer"] = "bearer"
     expires_in: int
+    session_id: UUID
+    session_expires_at: datetime
+    idle_expires_at: datetime
+
+
+class RefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    refresh_token: SecretStr = Field(min_length=43, max_length=43)
