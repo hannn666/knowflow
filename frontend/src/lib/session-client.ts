@@ -106,6 +106,43 @@ export async function ensureSession(expected?: BrowserSession | string, minimumM
   assertSlot(slot); expectedSession(current, expected);
   return current;
 }
+export async function confirmResultSession(expected: BrowserSession): Promise<BrowserSession> {
+  // Restore credentials if necessary, but never resend the business request.
+  try { await ensureSession(expected); }
+  catch (error) { assertCurrent(expected); throw error; }
+  return locked(async () => {
+    assertCurrent(expected);
+    // Do not reuse a preparation promise that could predate result completion.
+    let current: SessionStatus;
+    try { current = await status(); }
+    catch (error) { assertCurrent(expected); throw error; }
+    assertCurrent(expected);
+    if (!isSession(current)) throw new ClientError(401, "登录会话已失效，未显示问答结果");
+    expectedSession(current, expected);
+    return current;
+  });
+}
+export function watchResultInvalidation(clear: () => void) {
+  // Hide already displayed evidence on auth changes or lifecycle transitions.
+  // An in-flight answer still needs a fresh authoritative check before display.
+  const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(EVENT) : undefined;
+  if (channel) channel.onmessage = clear;
+  const storage = (event: StorageEvent) => {
+    if (event.key === null || event.key.startsWith("knowflow.auth.pending.")) clear();
+  };
+  window.addEventListener(EVENT, clear);
+  window.addEventListener("storage", storage);
+  window.addEventListener("pagehide", clear);
+  window.addEventListener("pageshow", clear);
+  window.addEventListener("focus", clear);
+  document.addEventListener("visibilitychange", clear);
+  return () => {
+    channel?.close(); window.removeEventListener(EVENT, clear);
+    window.removeEventListener("storage", storage);
+    window.removeEventListener("pagehide", clear); window.removeEventListener("pageshow", clear);
+    window.removeEventListener("focus", clear); document.removeEventListener("visibilitychange", clear);
+  };
+}
 export async function login(data: unknown) {
   return locked(async () => {
     const previous = activeSlot();

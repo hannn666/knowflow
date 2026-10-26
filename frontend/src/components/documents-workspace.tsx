@@ -215,7 +215,7 @@ export default function DocumentsWorkspace({ knowledgeBase, session }: {
               {stage?.parse_status !== "succeeded" && <p className="subtle">解析成功后才能建立索引。</p>}
               {stage?.parse_status === "succeeded" && !stage.has_text && <p className="subtle">PDF 没有可提取文本，当前无法建立索引。</p>}
               <p className="identifier">版本 ID：{version.document_version_id}</p>
-              <GroundedQuestion key={`${user.id}:${version.document_version_id}:${stage?.attempt_id ?? "unknown"}`}
+              <GroundedQuestion key={`${session.slot}:${session.sessionId}:${user.id}:${version.document_version_id}:${stage?.attempt_id ?? "unknown"}`}
                 version={version} session={session} onBusy={qaBusy}
                 externalBusy={!!busy || qaPending !== null} />
             </div>}

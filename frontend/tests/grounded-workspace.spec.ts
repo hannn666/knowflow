@@ -10,8 +10,8 @@ async function login(page:Page,email="alice@example.com") {
   await page.getByRole("button",{name:"进入工作台"}).click();
   await expect(page).toHaveURL(/knowledge-bases$/);
 }
-async function setup(page:Page,context:BrowserContext,two=false) {
-  await login(page);
+async function setup(page:Page,context:BrowserContext,two=false,email="alice@example.com") {
+  await login(page,email);
   const created=await context.request.post("/api/knowledge-bases",{headers:{Origin:origin},data:{name:"问答工作台"}});
   const kb=(await created.json()).id;
   const uploaded=await context.request.post(`/api/knowledge-bases/${kb}/documents`,{headers:{Origin:origin},
@@ -72,7 +72,8 @@ test("private BFF origin, field/Unicode budgets and cross-user authorization",as
 });
 test("mismatched citations and invalid model response are never rendered",async ({page,context}) => {
   await setup(page,context);
-  for (const question of ["wrong version","wrong document","wrong knowledge base","invalid result","bad refusal","fake prose"]) {
+  for (const question of ["wrong version","wrong document","wrong knowledge base","invalid result","bad refusal","fake prose",
+    "missing session binding","wrong user binding","wrong session binding"]) {
     await ask(page,question);
     await expect(page.locator(".qa-panel .error")).toContainText("无效结果");
     await expect(page.locator(".qa-result,.citation")).toHaveCount(0);
@@ -124,7 +125,7 @@ test("an account change during an admitted ask never displays the old account an
   await expect(page).toHaveURL(/knowledge-bases$/);
   await expect(page.locator(".qa-result")).toHaveCount(0);
 });
-test("expired JWT during a slow response cannot release evidence",async ({page,context}) => {
+test("expired admission JWT with a valid session still releases verified evidence",async ({page,context}) => {
   const {path}=await setup(page,context);
   await page.getByRole("button",{name:"退出登录"}).click(); await expect(page).toHaveURL(/login/);
   await apiLogin(context,"short@example.com");
@@ -137,7 +138,112 @@ test("expired JWT during a slow response cannot release evidence",async ({page,c
   await context.request.post(own+"/parse",{headers:{Origin:origin}});
   await context.request.post(own+"/index",{headers:{Origin:origin}});
   const r=await context.request.post(own+"/ask",{headers:{Origin:origin},data:{question:"slow session"}});
-  expect(r.status()).toBe(401); expect(await r.text()).not.toContain("42 credits");
+  expect(r.status()).toBe(200); expect(await r.text()).toContain("42 credits");
+  expect(r.headers()["set-cookie"]).toBeUndefined();
   expect((await (await context.request.get("/api/auth/me")).json()).state).toBe("refresh_required");
   expect((await context.request.post(path+"/ask",{headers:{Origin:origin},data:{question:"Apollo?"}})).status()).toBe(401);
+});
+
+async function qaControl(context: BrowserContext, sid: string, action = "inspect") {
+  const response = await context.request.post("http://127.0.0.1:8107/__fixture", {data:{sid,action}});
+  expect(response.status()).toBe(200); return response.json();
+}
+
+test("an admitted answer survives Access expiry and same-session rotation, with one POST", async ({page,context}) => {
+  await setup(page,context,false,"qa@example.com");
+  const before = await (await context.request.get("/api/auth/me")).json();
+  await qaControl(context,before.sessionId,"hold_ask");
+  await ask(page,"Apollo budget?");
+  await expect.poll(async () => (await qaControl(context,before.sessionId)).waiting).toBe(true);
+  await qaControl(context,before.sessionId,"expire_access");
+  // No automatic replay: the display check restores credentials AFTER the
+  // original POST completes, then confirms the same sid with a fresh /me.
+  await qaControl(context,before.sessionId,"release_ask");
+  await expect(page.locator(".answer-text")).toContainText("42 credits");
+  const after = await (await context.request.get("/api/auth/me")).json();
+  expect(after.sessionId).toBe(before.sessionId); expect(after.slot).toBe(before.slot);
+  const counts = await qaControl(context,before.sessionId);
+  expect(counts.asks).toBe(1); expect(counts.refreshes).toBe(1);
+});
+
+test("an answer arriving during another tab's legal rotation waits for that rotation",async ({page,context}) => {
+  await setup(page,context,false,"qa@example.com");
+  const current = await (await context.request.get("/api/auth/me")).json();
+  const other = await context.newPage(); await other.goto("/knowledge-bases");
+  await expect(other.getByRole("button",{name:"刷新列表"})).toBeEnabled();
+  await page.bringToFront();
+  await qaControl(context,current.sessionId,"hold_ask");
+  await ask(page,"Apollo budget?");
+  await expect.poll(async () => (await qaControl(context,current.sessionId)).waiting).toBe(true);
+  await context.request.post("http://127.0.0.1:8107/__fixture", {data:{sid:current.sessionId,action:"delay",ms:1500}});
+  await qaControl(context,current.sessionId,"expire_access");
+  // Trigger in the background tab without a browser focus/lifecycle change.
+  await other.getByRole("button",{name:"刷新列表"}).evaluate(button => (button as HTMLButtonElement).click());
+  await expect.poll(async () => (await qaControl(context,current.sessionId)).refreshes).toBe(1);
+  await qaControl(context,current.sessionId,"release_ask");
+  await expect(page.locator(".answer-text")).toContainText("42 credits");
+  expect((await qaControl(context,current.sessionId)).asks).toBe(1);
+  expect((await qaControl(context,current.sessionId)).revoked).toBe(false);
+});
+
+for (const action of ["revoke","idle","absolute","logout"] as const) {
+  test(`an admitted answer cannot survive ${action}`,async ({page,context}) => {
+    const {path} = await setup(page,context,false,"qa@example.com");
+    const current = await (await context.request.get("/api/auth/me")).json();
+    await qaControl(context,current.sessionId,"hold_ask");
+    const responsePromise = action === "logout" ? undefined : page.waitForResponse(r => r.url().endsWith(path+"/ask"));
+    await ask(page,"Apollo budget?");
+    await expect.poll(async () => (await qaControl(context,current.sessionId)).waiting).toBe(true);
+    if (action === "logout") {
+      // A separate tab uses the real browser coordinator and backend logout.
+      const other = await context.newPage(); await other.goto("/knowledge-bases");
+      await other.getByRole("button",{name:"退出登录"}).click();
+      await expect(other).toHaveURL(/login/);
+    } else await qaControl(context,current.sessionId,action);
+    await qaControl(context,current.sessionId,"release_ask");
+    if (action !== "logout") {
+      const response = await responsePromise!;
+      expect(response.status()).toBe(401);
+      expect(await response.text()).not.toContain("42 credits");
+      expect(response.headers()["set-cookie"]).toBeUndefined();
+    }
+    await expect(page.locator(".qa-result,.citation")).toHaveCount(0);
+    expect((await qaControl(context,current.sessionId)).asks).toBe(1);
+  });
+}
+
+for (const email of ["qa@example.com","bob@example.com"]) {
+  for (const outcome of ["answer","ask_401","ask_503","ask_disconnect"]) {
+    test(`late ${outcome} cannot cross a new login for ${email}`,async ({page,context}) => {
+      await setup(page,context,false,"qa@example.com");
+      const old = await (await context.request.get("/api/auth/me")).json();
+      await qaControl(context,old.sessionId,"hold_ask");
+      if (outcome !== "answer") await qaControl(context,old.sessionId,outcome);
+      await ask(page,"Apollo budget?");
+      await expect.poll(async () => (await qaControl(context,old.sessionId)).waiting).toBe(true);
+      const fresh = await (await apiLogin(context,email)).json();
+      expect(fresh.sessionId).not.toBe(old.sessionId);
+      await qaControl(context,old.sessionId,"release_ask");
+      await expect(page).toHaveURL(/knowledge-bases$/);
+      await expect(page.locator(".qa-result,.citation")).toHaveCount(0);
+      const current = await (await context.request.get("/api/auth/me")).json();
+      expect(current.slot).toBe(fresh.slot); expect(current.sessionId).toBe(fresh.sessionId);
+      expect((await qaControl(context,old.sessionId)).asks).toBe(1);
+    });
+  }
+}
+
+test("a revoked session after upstream release is denied by the fresh browser display gate",async ({page,context}) => {
+  await setup(page,context,false,"qa@example.com");
+  const current = await (await context.request.get("/api/auth/me")).json();
+  await page.route("**/api/knowledge-bases/*/documents/*/versions/*/ask",async route => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    await qaControl(context,current.sessionId,"revoke");
+    await route.fulfill({response});
+  });
+  await ask(page,"Apollo budget?");
+  await expect(page).toHaveURL(/login/);
+  await expect(page.locator(".qa-result,.citation")).toHaveCount(0);
+  expect((await qaControl(context,current.sessionId)).asks).toBe(1);
 });

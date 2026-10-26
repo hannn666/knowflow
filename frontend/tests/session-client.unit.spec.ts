@@ -11,6 +11,7 @@ import type { BrowserSession } from "../src/lib/session-contracts";
 
 type SessionModule = {
   ensureSession: (expected?: BrowserSession, minimum?: number) => Promise<BrowserSession>;
+  confirmResultSession: (expected: BrowserSession) => Promise<BrowserSession>;
   watchSession: (initial: BrowserSession, error: (e: unknown) => void) => () => void;
 };
 function fixture() {
@@ -24,6 +25,7 @@ function fixture() {
   const timers = new Map<number, { delay: number; callback: () => void }>();
   let timerId = 0;
   let failure = "";
+  let statusHook = () => {};
   let tail = Promise.resolve<unknown>(undefined);
   const window = new EventTarget();
   const document = Object.assign(new EventTarget(), { cookie: `knowflow_active=${slot}`, visibilityState: "visible" });
@@ -45,7 +47,12 @@ function fixture() {
         expiry = now + 900000;
         return Response.json({ ...current, expiresAt: expiry });
       }
-      if (path === "/api/auth/me") return Response.json(now >= expiry ? { state: "refresh_required", slot } : { ...current, expiresAt: expiry });
+      if (path === "/api/auth/me") {
+        statusHook();
+        if (failure === "me401") return Response.json({}, {status:401});
+        if (failure === "me503") return Response.json({}, {status:503});
+        return Response.json(now >= expiry ? { state: "refresh_required", slot } : { ...current, expiresAt: expiry });
+      }
       return Response.json({ ok: true });
     },
   });
@@ -61,7 +68,8 @@ function fixture() {
     return entry.exports;
   }
   const session = load(resolve("src/lib/session-client.ts")) as SessionModule;
-  return { session, current, calls, storage, timers,
+  return { session, current, calls, storage, timers, document,
+    onStatus: (hook: () => void) => { statusHook = hook; },
     advance: (ms: number) => { now += ms; }, fail: (value: string) => { failure = value; } };
 }
 async function flush() { for (let i = 0; i < 8; i++) await setImmediate(); }
@@ -98,5 +106,35 @@ for (const failure of ["timeout", "503"]) {
     expect(await outcome(f.session.ensureSession(f.current))).toBe(409);
     expect(f.calls.filter(v => v.endsWith("refresh"))).toHaveLength(1);
     expect([...f.storage.values()]).toEqual(["refresh"]);
+  });
+}
+
+test("result confirmation at minute 17 restores the admitted minute-14 session and queries fresh state", async () => {
+  const f = fixture(); f.advance(840000);
+  const admitted = await f.session.ensureSession(f.current, 0);
+  f.advance(180000);
+  const current = await f.session.confirmResultSession(admitted);
+  expect(current.sessionId).toBe(admitted.sessionId);
+  expect(f.calls.filter(v => v.endsWith("refresh"))).toHaveLength(1);
+  expect(f.calls.at(-1)).toBe("/api/auth/me");
+  expect(f.calls.filter(v => v.endsWith("/me"))).toHaveLength(3);
+});
+
+for (const fault of ["prepare401", "prepare503", "slot401", "slot503", "sid", "user", "logout"]) {
+  test(`fresh display gate rejects a late ${fault} change`, async () => {
+    const f = fixture(); const expected = structuredClone(f.current);
+    let calls = 0;
+    f.onStatus(() => {
+      if (++calls !== (fault.startsWith("prepare") ? 1 : 2)) return;
+      if (fault.startsWith("slot") || fault.startsWith("prepare")) {
+        f.document.cookie = `knowflow_active=${randomUUID()}`;
+        f.fail(fault.endsWith("401") ? "me401" : "me503");
+      }
+      if (fault === "sid") f.current.sessionId = randomUUID();
+      if (fault === "user") f.current.user.id = randomUUID();
+      if (fault === "logout") f.storage.set(`knowflow.auth.pending.${expected.slot}`, "logout");
+    });
+    expect(await outcome(f.session.confirmResultSession(expected))).toBe(409);
+    expect(f.calls.filter(v => v.endsWith("refresh"))).toHaveLength(0);
   });
 }

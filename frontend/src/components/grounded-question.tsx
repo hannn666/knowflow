@@ -5,6 +5,7 @@ import type { DocumentVersion } from "@/lib/document-contracts";
 import { validQuestion, type GroundedAnswer } from "@/lib/grounded-contracts";
 
 import type { BrowserSession } from "@/lib/session-contracts";
+import { assertCurrent, confirmResultSession, sessionNavigation, watchResultInvalidation } from "@/lib/session-client";
 
 export default function GroundedQuestion({ version, session, externalBusy, onBusy }: {
   version: DocumentVersion; session: BrowserSession; externalBusy: boolean;
@@ -17,7 +18,11 @@ export default function GroundedQuestion({ version, session, externalBusy, onBus
   const [busy,setBusy] = useState(false);
   const lock = useRef(false);
   const active = useRef(true);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; },[]);
+  useEffect(() => {
+    active.current = true;
+    const stop = watchResultInvalidation(() => setResult(null));
+    return () => { active.current = false; stop(); };
+  },[]);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (lock.current || externalBusy) return;
@@ -31,13 +36,15 @@ export default function GroundedQuestion({ version, session, externalBusy, onBus
         `knowledge-bases/${version.knowledge_base_id}/documents/${version.document_id}/versions/${version.document_version_id}/ask`,
         {question},session,{timeoutMs:315000});
       if (!active.current) return;
-      const current = await api<BrowserSession>("auth/me", undefined, session);
-      if (current.user.id !== session.user.id || current.sessionId !== session.sessionId || current.slot !== session.slot) { window.location.replace("/knowledge-bases"); return; }
-      if (active.current) setResult(answer);
+      await confirmResultSession(session);
+      if (!active.current) return;
+      assertCurrent(session); // No await between the final slot/pending gate and state update.
+      if (document.visibilityState === "visible") setResult(answer);
     } catch (e) {
       if (active.current) {
         setResult(null);
         setError(e instanceof ClientError ? e.message : "问答暂不可用，请稍后重试");
+        sessionNavigation(e);
       }
     } finally {
       lock.current = false;

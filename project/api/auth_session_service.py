@@ -152,3 +152,23 @@ def check_session(session: Session, identity: AccessIdentity, *, activity=False)
     except Exception:
         session.rollback()
         raise
+
+
+def check_result_session(session: Session, identity: AccessIdentity):
+    """Release gate for an already admitted request, never a bearer endpoint.
+
+    Start a fresh, short read transaction; select columns, not cached ORM state.
+    No idle extension or row lock. A committed revoke before this SELECT must
+    be observed. This is the release linearization point, not a network lock.
+    """
+    _require_clean(session)
+    session.rollback()
+    try:
+        row = session.execute(select(AuthSession.user_id, AuthSession.revoked_at,
+            AuthSession.absolute_expires_at, AuthSession.idle_expires_at)
+            .join(User, User.id == AuthSession.user_id)
+            .where(AuthSession.id == identity.session_id)).one_or_none()
+        if not _active(row, utcnow()) or row.user_id != identity.user_id:
+            raise InvalidSession
+    finally:
+        session.rollback()  # Read-only: never renew idle or retain a transaction.

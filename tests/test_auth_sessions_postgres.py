@@ -104,6 +104,46 @@ def actor(engine, operation, raw):
             return "denied"
 
 
+@pytest.mark.parametrize("change", ["revoke", "rotate", "replay"])
+def test_long_result_gate_observes_committed_session_change(pg_engine, change):
+    """Independent DB connections, bounded events; no model or business data."""
+    bundle = issue(pg_engine)
+    identity = auth_tokens.decode_access_identity(bundle.access_token)
+    admitted, completed = Event(), Event()
+
+    def long_request():
+        with Session(pg_engine) as s:
+            service.check_session(s, identity, activity=True)
+            stale = s.get(AuthSession, identity.session_id)
+            original_idle = stale.idle_expires_at
+            s.rollback()  # Same boundary used before grounded model execution.
+            assert not s.in_transaction()
+            admitted.set()
+            assert completed.wait(15)
+            try:
+                service.check_result_session(s, identity)
+                verdict = "allowed"
+            except service.InvalidSession:
+                verdict = "denied"
+            assert not s.in_transaction()
+            assert s.get(AuthSession, identity.session_id, populate_existing=True).idle_expires_at == original_idle
+            return verdict
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        result = pool.submit(long_request)
+        assert admitted.wait(15)
+        try:
+            operation = service.revoke_session if change == "revoke" else service.rotate_refresh
+            # Must finish while inference remains paused: no auth row lock held.
+            pool.submit(actor, pg_engine, operation, bundle.refresh_token).result(timeout=5)
+            if change == "replay":
+                assert pool.submit(actor, pg_engine, service.rotate_refresh,
+                                   bundle.refresh_token).result(timeout=5) == "denied"
+        finally:
+            completed.set()
+        assert result.result(timeout=15) == ("allowed" if change == "rotate" else "denied")
+
+
 @pytest.mark.parametrize("round_number", range(3))
 def test_same_token_concurrent_rotation_is_single_use(pg_engine, monkeypatch, round_number):
     bundle = issue(pg_engine)

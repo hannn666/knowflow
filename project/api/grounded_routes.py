@@ -3,13 +3,15 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from project.api.auth_dependencies import get_current_user
+from project.api.auth_dependencies import get_current_user, get_current_identity, authentication_error
+from project.api.auth_tokens import AccessIdentity
+from project.api.auth_session_service import InvalidSession, check_result_session
 from project.api.document_service import DocumentNotFound
 from project.api.grounded_schemas import AskRequest, AskResponse, IndexResponse
 from project.api.grounded_service import GroundedService, QABusy, QAInvalidOutput, get_grounded_service
@@ -59,6 +61,7 @@ class GroundedRoute(APIRoute):
 router=APIRouter(prefix="/knowledge-bases",tags=["document-grounded-qa"],route_class=GroundedRoute)
 PATH="/{knowledge_base_id}/documents/{document_id}/versions/{version_id}"
 CurrentUser=Annotated[User,Depends(get_current_user)]
+CurrentIdentity=Annotated[AccessIdentity,Depends(get_current_identity)]
 DatabaseSession=Annotated[Session,Depends(get_database_session)]
 Storage=Annotated[DocumentStorage,Depends(get_document_storage)]
 Service=Annotated[GroundedService,Depends(get_grounded_service)]
@@ -98,9 +101,17 @@ async def index(knowledge_base_id:UUID,document_id:UUID,version_id:UUID,request:
 
 @router.post(PATH+"/ask",response_model=AskResponse)
 async def ask(knowledge_base_id:UUID,document_id:UUID,version_id:UUID,body:AskRequest,
-              user:CurrentUser,session:DatabaseSession,storage:Storage,service:Service):
+              response:Response,identity:CurrentIdentity,session:DatabaseSession,storage:Storage,service:Service):
     try:
-        return await run_in_threadpool(service.ask,session,user.id,knowledge_base_id,document_id,version_id,storage,body.question)
+        result = await run_in_threadpool(service.ask,session,identity.user_id,knowledge_base_id,document_id,version_id,storage,body.question)
+        # Applies to answers AND all evidence-insufficient returns. Do not
+        # decode the admission JWT again: expiry alone does not revoke a session.
+        await run_in_threadpool(check_result_session,session,identity)
+        response.headers["X-KnowFlow-Verified-User"] = str(identity.user_id)
+        response.headers["X-KnowFlow-Verified-Session"] = str(identity.session_id)
+        return result
+    except InvalidSession:
+        raise authentication_error() from None
     except Exception as error:
         translated=translate(error)
         logger.warning("grounded_request_failed category=%s", translated.detail)

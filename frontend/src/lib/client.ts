@@ -16,7 +16,11 @@ export async function api<T>(path: string, data?: unknown, expected?: BrowserSes
       "X-KnowFlow-User": snapshot.user.id, "X-KnowFlow-Session": snapshot.sessionId,
       "X-KnowFlow-Slot": snapshot.slot,
     } });
-    assertCurrent(snapshot);
+    // A legitimate rotation may still hold the cross-tab auth lock when a
+    // long answer arrives. Wait for it; uncertain/logout transitions still fail
+    // closed. This prepares credentials only and never repeats the ask POST.
+    if (path.endsWith("/ask")) await ensureSession(snapshot, 0);
+    else assertCurrent(snapshot);
     return result;
   } catch (e) {
     // An old response must not invalidate a new login, including the same user.

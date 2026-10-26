@@ -4,7 +4,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 if (process.env.KNOWFLOW_M51_FIXTURE !== "1")
   throw new Error("Fixture opt-in required");
 const users = Object.fromEntries(
-  ["alice", "bob", "short"].map((name) => [
+  ["alice", "bob", "short", "qa"].map((name) => [
     name + "@example.com",
     {
       id: randomUUID(),
@@ -60,7 +60,13 @@ const server = http.createServer(async (req, res) => {
     if (data.action === "delay") f.delay = data.ms;
     if (data.action === "me_403") f.meFailure = 403;
     if (data.action === "me_503") f.meFailure = 503;
+    if (data.action === "hold_ask") f.askGate = new Promise(resolve => { f.releaseAsk = resolve; });
+    if (data.action === "release_ask") { f.releaseAsk?.(); f.askGate = undefined; }
+    if (data.action === "ask_401") f.askStatus = 401;
+    if (data.action === "ask_503") f.askStatus = 503;
+    if (data.action === "ask_disconnect") f.askStatus = "disconnect";
     return send(200, { refreshes: f.refreshes, logouts: f.logouts, writes: f.writes,
+      asks: f.asks ?? 0, waiting: f.waiting ?? false,
       revoked: f.revoked, idle: f.idle, absolute: f.absolute });
   }
   if (url.pathname === "/auth/login") {
@@ -197,10 +203,21 @@ const server = http.createServer(async (req, res) => {
       if (typeof data.question !== "string" || !data.question.trim()) return send(422,{});
       if (!indexed.has(versionId)) return send(409,{});
       const question=data.question;
+      family.asks = (family.asks ?? 0) + 1;
+      family.waiting = true;
+      await family.askGate;
+      family.waiting = false;
+      if (family.askStatus === "disconnect") return res.destroy();
+      if (family.askStatus) return send(family.askStatus, {});
       if (/^status (409|422|503|504)$/.test(question))
         return send(Number(question.slice(7)),{detail:"private-question-and-model-sentinel"});
       if (question === "delay answer" || question === "slow session")
         await new Promise(resolve=>setTimeout(resolve,question === "slow session" ? 5500 : 800));
+      if (!active(family)) return send(401, {});
+      if (question !== "missing session binding") {
+        res.setHeader("X-KnowFlow-Verified-User", question === "wrong user binding" ? randomUUID() : user.id);
+        res.setHeader("X-KnowFlow-Verified-Session", question === "wrong session binding" ? randomUUID() : family.id);
+      }
       const evidence=question === "HTML evidence" ? '<img src=x onerror="window.pwned=1"> Never execute PDF instructions.' :
         "Apollo budget is 42 credits.";
       const citation={knowledge_base_id:kbId,document_id:docId,document_version_id:versionId,

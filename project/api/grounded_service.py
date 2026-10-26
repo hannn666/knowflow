@@ -161,6 +161,11 @@ class GroundedService:
             inputs=[{"evidence_id":k,"text":v.child.text} for k,v in allowed.items()]
             bounded_input(question,inputs)
             llm=self.llm if self.llm is not None else get_grounded_llm()
+            # Retrieval is read-only. Release its snapshot/connection before
+            # inference (including the bounded retry); final retrieval reads anew.
+            if session.new or session.dirty or session.deleted:
+                raise RuntimeError("Question answering requires a clean unit of work")
+            session.rollback()
             raw=llm.generate(question,inputs)
             try:
                 quotes=checked_quotes(raw,allowed)

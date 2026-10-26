@@ -6,7 +6,7 @@ from jwt import InvalidTokenError
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from project.api.auth_tokens import decode_access_identity
+from project.api.auth_tokens import AccessIdentity, decode_access_identity
 from project.api.auth_session_service import InvalidSession, check_session
 from project.db.business_database import get_database_session
 from project.db.business_models import User
@@ -43,4 +43,15 @@ def get_current_user(
     # A signed token does not make a deleted user valid again.
     if user is None:
         raise authentication_error()
+    request.state.auth_identity = identity
     return user
+
+
+def get_current_identity(
+    request: Request, user: Annotated[User, Depends(get_current_user)],
+) -> AccessIdentity:
+    """Immutable context captured only AFTER JWT, session and user validation."""
+    identity = request.state.auth_identity
+    if identity.user_id != user.id:
+        raise authentication_error()
+    return identity

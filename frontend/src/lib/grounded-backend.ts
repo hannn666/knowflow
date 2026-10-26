@@ -1,5 +1,5 @@
 import "server-only";
-import { backendBase, body, checkWrite, json, me, sameIdentity, SafeError, token } from "./backend";
+import { backendBase, body, checkWrite, json, me, sameIdentity, sessionId, SafeError, token } from "./backend";
 import { uuid } from "./contracts";
 import { checkedAnswer, validQuestion } from "./grounded-contracts";
 
@@ -38,6 +38,7 @@ export async function askRoute(request: Request, parts: string[]) {
   const [kb,doc,ver] = [parts[1],parts[3],parts[5]];
   const bearer = await token();
   const user = await me(bearer);
+  const sid = sessionId(bearer);
   await sameIdentity(request, bearer);
   const data = await body(request,16 * 1024);
   if (Object.keys(data).join() !== "question" || !validQuestion(data.question))
@@ -65,7 +66,11 @@ export async function askRoute(request: Request, parts: string[]) {
   }
   const result = checkedAnswer(await decode(response),kb,doc,ver);
   if (!result) throw invalid();
-  // A slow model request can outlive the JWT. Revalidate before releasing evidence.
-  if ((await me(bearer)).id !== user.id) throw new SafeError(401,"登录已过期，请重新登录");
+  // FastAPI checks the persisted session AFTER source/quote verification. These
+  // headers are a fixed upstream contract, not client-supplied authorization.
+  // This request cannot read cookies updated later by another browser request.
+  // The browser independently verifies its current slot/user/sid before display.
+  if (response.headers.get("x-knowflow-verified-user") !== user.id ||
+      response.headers.get("x-knowflow-verified-session") !== sid) throw invalid();
   return json(result);
 }
