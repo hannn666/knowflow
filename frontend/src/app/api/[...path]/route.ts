@@ -1,19 +1,16 @@
+import { authRoute } from "@/lib/auth-backend";
 import { uuid } from "@/lib/contracts";
 import { documentRoute } from "@/lib/document-backend";
 import { askRoute } from "@/lib/grounded-backend";
 import {
-  COOKIE,
   SafeError,
   body,
   checkWrite,
-  clear,
   error,
-  expiry,
   json,
   kb,
-  me,
   token,
-  upstream,
+  sameIdentity,
 } from "@/lib/backend";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,60 +23,10 @@ async function handle(request: Request, context: Context) {
         !(parts.length === 7 && parts[2] === "documents" && parts[4] === "versions" &&
           ["parse", "index"].includes(parts[6]) && uuid.test(parts[1] ?? "") &&
           uuid.test(parts[3] ?? "") && uuid.test(parts[5] ?? ""))) checkWrite(request);
-    if (path === "auth/logout" && request.method === "POST")
-      return clear(json({ ok: true }));
-    if (path === "auth/login" && request.method === "POST") {
-      const data = await body(request);
-      if (
-        Object.keys(data).sort().join(",") !== "email,password" ||
-        typeof data.email !== "string" ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email) ||
-        data.email.length > 320 ||
-        typeof data.password !== "string" ||
-        !data.password.length ||
-        data.password.length > 128
-      )
-        throw new SafeError(422, "请填写有效邮箱和密码");
-      const raw = (await upstream("/auth/login", undefined, data)) as {
-        access_token?: unknown;
-        expires_in?: unknown;
-        token_type?: unknown;
-      };
-      if (
-        typeof raw?.access_token !== "string" ||
-        raw.access_token.length > 2048 ||
-        !/^[A-Za-z0-9_.-]+$/.test(raw.access_token) ||
-        raw.token_type !== "bearer" ||
-        typeof raw.expires_in !== "number" ||
-        raw.expires_in <= 0 ||
-        raw.expires_in > 900
-      )
-        throw new SafeError(503, "登录服务返回无效结果");
-      const user = await me(raw.access_token);
-      const expiresAt = expiry(raw.access_token);
-      const age = Math.floor(
-        Math.min(raw.expires_in, (expiresAt - Date.now()) / 1000),
-      );
-      if (age <= 0) throw new SafeError(401, "登录已过期，请重新登录");
-      const response = json({ user, expiresAt });
-      response.cookies.set(COOKIE, raw.access_token, {
-        httpOnly: true,
-        sameSite: "strict",
-        secure: process.env.NODE_ENV === "production",
-        maxAge: age,
-        path: "/",
-      });
-      return response;
-    }
-    if (path === "auth/me" && request.method === "GET") {
-      const value = await token();
-      return json({ user: await me(value), expiresAt: expiry(value) });
-    }
+    if (parts[0] === "auth") return await authRoute(request, path);
     if (path === "knowledge-bases") {
       const value = await token();
-      const expected = request.headers.get("x-knowflow-user");
-      if (expected && (await me(value)).id !== expected)
-        throw new SafeError(409, "登录身份已变化，请刷新页面");
+      await sameIdentity(request, value);
       if (request.method === "GET") {
         const query = new URL(request.url).searchParams;
         const offset = query.get("offset") ?? "0";
@@ -112,9 +59,7 @@ async function handle(request: Request, context: Context) {
       request.method === "GET"
     ) {
       const value = await token();
-      const expected = request.headers.get("x-knowflow-user");
-      if (expected && (await me(value)).id !== expected)
-        throw new SafeError(409, "登录身份已变化，请刷新页面");
+      await sameIdentity(request, value);
       return json(await kb(`/knowledge-bases/${parts[1]}`, value));
     }
     if (parts.length === 7 && parts[6] === "ask" && request.method === "POST")

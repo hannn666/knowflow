@@ -1,16 +1,15 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import Dashboard from "@/components/dashboard";
-import { SafeError, me, token, expiry } from "@/lib/backend";
+import { SafeError, session as readSession } from "@/lib/backend";
 export const dynamic = "force-dynamic";
 export default async function Page() {
   let session;
   try {
-    const value = await token();
-    session = { user: await me(value), expiresAt: expiry(value) };
+    session = await readSession();
   } catch (e) {
     if (e instanceof SafeError && e.status === 401)
-      redirect("/login?expired=1");
+      redirect("/session/renew?returnTo=%2Fknowledge-bases");
     return (
       <main className="shell">
         <div className="panel">
@@ -23,5 +22,5 @@ export default async function Page() {
       </main>
     );
   }
-  return <Dashboard user={session.user} expiresAt={session.expiresAt} />;
+  return <Dashboard session={session} />;
 }

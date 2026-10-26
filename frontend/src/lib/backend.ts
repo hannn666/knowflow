@@ -2,8 +2,9 @@ import "server-only";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { isUser, isKnowledgeBase } from "./contracts";
+import { uuid } from "./contracts";
+import { ACTIVE_COOKIE, accessCookie, type BrowserSession } from "./session-contracts";
 
-export const COOKIE = "knowflow_session";
 const MAX_BODY = 4096;
 export class SafeError extends Error {
   constructor(
@@ -105,7 +106,7 @@ export function fail(status: number): never {
     messages[status] ?? "后端暂不可用，请稍后重试",
   );
 }
-export async function upstream(path: string, token?: string, data?: unknown) {
+export async function upstream(path: string, token?: string, data?: unknown, noContent = false) {
   // Only callers with fixed routes and validated UUIDs may invoke this helper.
   try {
     const response = await fetch(new URL(path, backendBase()), {
@@ -121,6 +122,11 @@ export async function upstream(path: string, token?: string, data?: unknown) {
       signal: AbortSignal.timeout(10000),
     });
     if (!response.ok) fail(response.status);
+    if (noContent) {
+      await response.body?.cancel();
+      if (response.status !== 204) fail(503);
+      return;
+    }
     return (await response.json()) as unknown;
   } catch (e) {
     if (e instanceof SafeError) throw e;
@@ -128,10 +134,36 @@ export async function upstream(path: string, token?: string, data?: unknown) {
   }
 }
 export async function token() {
-  const value = (await cookies()).get(COOKIE)?.value;
+  const jar = await cookies();
+  const slot = jar.get(ACTIVE_COOKIE)?.value;
+  const value = slot && uuid.test(slot) ? jar.get(accessCookie(slot))?.value : undefined;
   if (!value || value.length > 2048 || !/^[A-Za-z0-9_.-]+$/.test(value))
     throw new SafeError(401, "登录已过期，请重新登录");
   return value;
+}
+export function sessionId(value: string) {
+  // Metadata only. Call me() first; FastAPI verifies signature, sid and ownership.
+  try {
+    const claims = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString());
+    if (typeof claims.sid !== "string" || !uuid.test(claims.sid)) throw new Error();
+    return claims.sid as string;
+  } catch { throw new SafeError(503, "登录服务返回无效结果"); }
+}
+export async function session(value?: string): Promise<BrowserSession> {
+  const bearer = value ?? await token();
+  const user = await me(bearer);
+  const slot = (await cookies()).get(ACTIVE_COOKIE)?.value;
+  if (!slot || !uuid.test(slot)) throw new SafeError(401, "请重新登录");
+  return { user, slot, sessionId: sessionId(bearer), expiresAt: expiry(bearer) };
+}
+export async function sameIdentity(request: Request, bearer: string) {
+  const expected = request.headers.get("x-knowflow-user");
+  const sid = request.headers.get("x-knowflow-session");
+  const slot = request.headers.get("x-knowflow-slot");
+  const currentSlot = (await cookies()).get(ACTIVE_COOKIE)?.value;
+  if (slot && slot !== currentSlot || sid && sid !== sessionId(bearer) ||
+      expected && (await me(bearer)).id !== expected)
+    throw new SafeError(409, "登录身份已变化，请刷新页面");
 }
 export function expiry(value: string) {
   try {
@@ -177,19 +209,9 @@ export function json(data: unknown, status = 200) {
     headers: { "Cache-Control": "no-store, max-age=0", Pragma: "no-cache" },
   });
 }
-export function clear(response: NextResponse) {
-  response.cookies.set(COOKIE, "", {
-    httpOnly: true,
-    sameSite: "strict",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 0,
-  });
-  return response;
-}
 export function error(e: unknown) {
   const safe =
     e instanceof SafeError ? e : new SafeError(503, "服务暂不可用，请稍后重试");
-  const response = json({ message: safe.message }, safe.status);
-  return safe.status === 401 ? clear(response) : response;
+  // Business/metadata responses never write credentials, including late 401s.
+  return json({ message: safe.message }, safe.status);
 }

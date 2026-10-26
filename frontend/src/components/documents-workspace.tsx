@@ -3,8 +3,11 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ClientError } from "@/lib/client";
 import GroundedQuestion from "./grounded-question";
-import type { KnowledgeBase, User } from "@/lib/contracts";
+import type { KnowledgeBase } from "@/lib/contracts";
 import type { DocumentItem, DocumentVersion, IndexReceipt, ParseStage } from "@/lib/document-contracts";
+
+import { watchSession } from "@/lib/session-client";
+import type { BrowserSession } from "@/lib/session-contracts";
 
 const SIZE = 10 * 1024 * 1024;
 const pageSize = 50;
@@ -15,9 +18,10 @@ const parseState = (value: ParseStage | null) => {
   if (!value || value.parse_status === "not_started") return "尚未解析";
   return ({ running: "解析正在执行", succeeded: "解析成功", failed: "解析失败" })[value.parse_status];
 };
-export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
-  knowledgeBase: KnowledgeBase; user: User; expiresAt: number;
+export default function DocumentsWorkspace({ knowledgeBase, session }: {
+  knowledgeBase: KnowledgeBase; session: BrowserSession;
 }) {
+  const user = session.user;
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [documentOffset, setDocumentOffset] = useState(0);
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
@@ -52,15 +56,15 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
   const loadDocuments = useCallback(async (offset: number) => {
     setLoading(true); setError("");
     try {
-      const result = await api<DocumentItem[]>(`knowledge-bases/${kb}/documents?offset=${offset}`, undefined, user.id);
+      const result = await api<DocumentItem[]>(`knowledge-bases/${kb}/documents?offset=${offset}`, undefined, session);
       setDocuments(result); setDocumentOffset(offset);
       return result;
     } catch (e) { showFailure(e); return null; }
     finally { setLoading(false); }
-  }, [kb, user.id]);
+  }, [kb, session]);
   const refreshStage = async (doc: string, ver: string) => {
     try {
-      const result = await api<ParseStage>(path(doc,ver)+"/parse", undefined, user.id);
+      const result = await api<ParseStage>(path(doc,ver)+"/parse", undefined, session);
       if (selectedVersion.current === ver) setStage(result);
     } catch (e) { showFailure(e); }
   };
@@ -76,7 +80,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
     setDocument(item); setVersions([]); setVersion(null); setStage(null); setVerified(null);
     setLoadingVersions(true); setError(""); setNotice("");
     try {
-      const result = await api<DocumentVersion[]>(`knowledge-bases/${kb}/documents/${item.id}/versions?offset=${offset}`, undefined, user.id);
+      const result = await api<DocumentVersion[]>(`knowledge-bases/${kb}/documents/${item.id}/versions?offset=${offset}`, undefined, session);
       if (selectedDocument.current !== item.id) return;
       setVersions(result); setVersionOffset(offset);
       const chosen = result.find(v => v.document_version_id === prefer) ?? result[0];
@@ -86,21 +90,12 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
   };
   useEffect(() => {
     const initial = setTimeout(() => void loadDocuments(0), 0);
-    const expiration = setTimeout(() => window.location.replace("/login?expired=1"), Math.max(0, expiresAt-Date.now()));
-    const check = () => {
-      if (window.document.visibilityState !== "visible") return;
-      void api<{user:User}>("auth/me").then(data => {
-        if (data.user.id !== user.id) window.location.replace("/knowledge-bases");
-      }).catch(() => {
-        setDocuments([]); setDocument(null); setVersion(null); setVerified(null);
-        setError("无法确认登录状态，请刷新页面");
-      });
-    };
-    window.addEventListener("pageshow", check);
-    window.document.addEventListener("visibilitychange", check);
-    return () => { clearTimeout(initial); clearTimeout(expiration);
-      window.removeEventListener("pageshow", check); window.document.removeEventListener("visibilitychange", check); };
-  }, [loadDocuments, expiresAt, user.id]);
+    const stop = watchSession(session, e => {
+      setDocuments([]); setDocument(null); setVersion(null); setVerified(null);
+      setError(e instanceof Error ? e.message : "Session unavailable");
+    });
+    return () => { clearTimeout(initial); stop(); };
+  }, [loadDocuments, session]);
   const upload = async (event: React.FormEvent) => {
     event.preventDefault();
     if (lock.current || qaPending !== null || !file) return;
@@ -109,7 +104,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
     }
     lock.current = true; setBusy("upload"); setError(""); setNotice("");
     try {
-      const result = await api<DocumentVersion>(`knowledge-bases/${kb}/documents`, undefined, user.id,
+      const result = await api<DocumentVersion>(`knowledge-bases/${kb}/documents`, undefined, session,
         { file, timeoutMs: 60000 });
       setFile(null);
       if (fileInput.current) fileInput.current.value = "";
@@ -130,12 +125,12 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
     const doc = version.document_id, ver = version.document_version_id;
     try {
       if (kind === "parse") {
-        const result = await api<ParseStage>(path(doc,ver)+"/parse", undefined, user.id,
+        const result = await api<ParseStage>(path(doc,ver)+"/parse", undefined, session,
           { noBody:true, timeoutMs:85000 });
         if (selectedVersion.current === ver) setStage(result);
         setNotice(result.parse_status === "succeeded" ? "解析结果已保存；还没有建立检索索引。" : "解析请求已返回，请查看阶段状态。");
       } else {
-        const result = await api<IndexReceipt>(path(doc,ver)+"/index", undefined, user.id,
+        const result = await api<IndexReceipt>(path(doc,ver)+"/index", undefined, session,
           { noBody:true, timeoutMs:315000 });
         if (selectedVersion.current === ver) setVerified(result);
         setNotice("本次索引写入已验证。刷新页面后需要重新核验，不能仅凭旧回执判断仍有效。");
@@ -151,7 +146,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
   };
   const logout = async () => {
     if (lock.current) return;
-    try { await api("auth/logout", {}); window.location.replace("/login"); }
+    try { await api("auth/logout", {}, session); window.location.replace("/login"); }
     catch (e) { showFailure(e); }
   };
   return <div className="workspace">
@@ -221,7 +216,7 @@ export default function DocumentsWorkspace({ knowledgeBase, user, expiresAt }: {
               {stage?.parse_status === "succeeded" && !stage.has_text && <p className="subtle">PDF 没有可提取文本，当前无法建立索引。</p>}
               <p className="identifier">版本 ID：{version.document_version_id}</p>
               <GroundedQuestion key={`${user.id}:${version.document_version_id}:${stage?.attempt_id ?? "unknown"}`}
-                version={version} userId={user.id} onBusy={qaBusy}
+                version={version} session={session} onBusy={qaBusy}
                 externalBusy={!!busy || qaPending !== null} />
             </div>}
           </>}

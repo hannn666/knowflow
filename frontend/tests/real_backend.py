@@ -18,7 +18,7 @@ def main() -> None:
     from sqlalchemy.orm import Session
     from project.api.app import create_app
     from project.api.auth_service import register_user
-    from project.api import auth_routes, auth_tokens
+    from project.api import auth_session_service, auth_tokens
     from project.db.business_database import get_database_session
     from project.db.business_models import Base
     import jwt
@@ -39,15 +39,17 @@ def main() -> None:
                 user = register_user(session, email, "Fixture-only-password-123")
                 if email.startswith("short"):
                     short_id = user.id
-        original = auth_routes.create_access_token
-        def issue(identity):
-            value = original(identity)
-            if identity != short_id:
+        original = auth_session_service.create_access_token
+        short_issued = set()
+        def issue(identity, sid):
+            value = original(identity, sid)
+            if identity != short_id or sid in short_issued:
                 return value
+            short_issued.add(sid)
             claims = jwt.decode(value, auth_tokens.get_signing_key(), algorithms=["HS256"], audience="knowflow-api", issuer="knowflow")
             claims["exp"] = int(time.time()) + 4
             return jwt.encode(claims, auth_tokens.get_signing_key(), algorithm="HS256")
-        auth_routes.create_access_token = issue  # Test-process only, short expiry fixture.
+        auth_session_service.create_access_token = issue  # Test-process only, short expiry fixture.
         app = create_app()
         def session_dependency():
             with Session(engine) as session:

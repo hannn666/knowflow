@@ -14,9 +14,13 @@ npm run dev
 
 在浏览器打开 http://localhost:3000 。FastAPI由用户单独启动在8000，已有账号用于登录。本前端不注册用户、不执行数据库迁移。
 
-`.env.local`中的`KNOWFLOW_API_URL`仅服务端可读、固定可信FastAPI地址；`KNOWFLOW_WEB_ORIGIN`是浏览器地址的精确Origin。主机名/端口要一致，localhost与127.0.0.1不可混用。生产运行必须配置HTTPS Origin，Cookie自动Secure；不信任浏览器Host或Forwarded头确定CSRF边界。反向代理需保留Origin。没有refresh token，15分钟后重新登录。
+`.env.local`中的`KNOWFLOW_API_URL`仅服务端可读、固定可信FastAPI地址；`KNOWFLOW_WEB_ORIGIN`是浏览器地址的精确Origin。主机名/端口要一致，localhost与127.0.0.1不可混用。生产运行必须配置HTTPS Origin，Cookie自动Secure；不信任浏览器Host或Forwarded头确定CSRF边界。反向代理需保留Origin。
 
-浏览器只调用同源/api；JWT仅HttpOnly/SameSite=Strict/host-only/path=/ Cookie，未存localStorage或JavaScript。固定BFF allowlist代理登录、知识库、文档列表/版本、上传、解析和索引；所有写请求验证Origin。原有JSON表单继续限4096字节，只有固定上传路由接受multipart，实际接收总量限制11MiB，FastAPI另按块限制PDF文件10MiB。所有私有响应/SSR与fetch禁用缓存；401清除Cookie、跳转登录。退出清除浏览器Cookie，不能撤销已被窃取JWT。生产部署的TLS、入口限流和全局XSS/CSRF审计不在本片范围。
+浏览器只调用同源/api；Access/Refresh分别保存为`knowflow_access_{slot}`（Path=/）及`knowflow_refresh_{slot}`（Path=/api/auth）HttpOnly/SameSite=Strict/host-only Cookie，生产Secure；不向JS、HTML、日志或localStorage返回Token。非秘密`knowflow_active` Cookie只选择本次登录槽位，不能授权。所有写请求验证固定Origin及Sec-Fetch-Site；认证POST要求JSON且实际正文≤4096字节，refresh/logout只接受空对象。固定上传路由接受multipart，实际接收总量限制11MiB，FastAPI另限制PDF文件10MiB。所有私有响应/SSR与fetch禁用缓存；业务401不写Cookie，不自动重放任何业务请求。
+
+Access仍为15分钟。统一协调器在临近到期、业务操作前或休眠恢复时检查会话，必要时调用POST `/api/auth/refresh`。同页共享准备Promise；登录、续期、退出共享跨标签Web Lock，取得锁后重读状态。BroadcastChannel只通知状态变化。缺少Web Locks或站点存储时明确停止认证操作，需使用支持的浏览器；没有不受协调的续期旁路。localStorage只保存非秘密槽位的未确认操作标记，不保存用户信息或Token。续期超时/503/响应丢失后保留标记并停止自动轮换，避免重放已消费RT；可明确重试退出或重新登录。新登录使用新槽位，迟到响应只能写旧槽位，不能覆盖新账号Cookie。退出调用后端撤销，确认成功后才清当前槽位凭证并通知其他标签；失败会明确显示未确认且暂停业务操作。
+
+后端强制空闲30分钟、绝对8小时；后台/me和refresh不延长空闲时间。硬刷新时Access Cookie已消失会进入`/session/renew`，由浏览器同源POST恢复；SSR不写Cookie。返回路径只允许知识库列表或UUID详情页。旧无sid JWT及旧单Cookie登录需要重登。本分支依赖阶段一迁移e5d6a7b8c901，开发库尚未授权升级，不能直接用旧开发schema运行本分支。第二阶段无需新迁移。自动续期代码仍待独立审查及迁移后的真实浏览器验收。
 
 知识库、文档与版本每页50项，支持前后分页；名称和文件名按文字呈现，不执行用户HTML。短会话及身份刷新避免跨用户复用页面；登录/退出使用整页导航清除路由内存状态。文档整体pending仅表示原件已保存；解析阶段另行查询；索引verified只显示本次有响应的校验快照，刷新后不会伪造恢复。解析与索引是同步请求，BFF分别等待70秒/300秒，超时可能意味着结果尚不确定，不会自动重复提交。长期生产部署须确认代理平台允许相应请求时长。
 

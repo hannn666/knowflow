@@ -90,7 +90,7 @@ export default function Login() {
             </button>
           </form>
           <p className="footnote">
-            登录凭证有效期为15分钟。过期后请重新登录。
+            登录期间自动续期；空闲30分钟或登录满8小时后需重新登录。
             <br />
             本阶段使用已有账户，尚未提供注册页面。
           </p>

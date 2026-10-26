@@ -1,3 +1,4 @@
+import { apiLogin } from "./auth-helpers";
 import { test, expect } from "@playwright/test";
 const credentials = {
   email: "alice@example.com",
@@ -56,7 +57,7 @@ test("real list/create/detail, refresh, cookies, logout and A/B isolation", asyn
   expect(await session.text()).not.toContain("access_token");
   expect(await session.text()).not.toContain("password_hash");
   const cookie = (await context.cookies()).find(
-    (c) => c.name === "knowflow_session",
+    (c) => c.name.startsWith("knowflow_access_"),
   )!;
   expect(cookie.httpOnly).toBeTruthy();
   expect(cookie.sameSite).toBe("Strict");
@@ -80,7 +81,7 @@ test("real list/create/detail, refresh, cookies, logout and A/B isolation", asyn
   await page.getByRole("button", { name: "退出登录" }).click();
   await expect(page).toHaveURL(/login/);
   expect(
-    (await context.cookies()).some((c) => c.name === "knowflow_session"),
+    (await context.cookies()).some((c) => c.name.startsWith("knowflow_access_")),
   ).toBeFalsy();
   await login(page, "bob@example.com");
   await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
@@ -88,7 +89,8 @@ test("real list/create/detail, refresh, cookies, logout and A/B isolation", asyn
   expect(foreign.status()).toBe(404);
   expect(await foreign.text()).not.toContain(name);
 });
-test("CSRF, allowlist, validation and actual body cap", async ({ request }) => {
+test("CSRF, allowlist, validation and actual body cap", async ({ context }) => {
+  const request = context.request;
   for (const origin of ["https://attacker.example", undefined]) {
     const r = await request.post("/api/auth/login", {
       headers: origin ? { Origin: origin } : {},
@@ -110,10 +112,7 @@ test("CSRF, allowlist, validation and actual body cap", async ({ request }) => {
   expect((await request.get("/api/http://attacker.example")).status()).toBe(
     404,
   );
-  const login = await request.post("/api/auth/login", {
-    headers: write,
-    data: credentials,
-  });
+  const login = await apiLogin(context);
   expect(login.status()).toBe(200);
   expect(await login.text()).not.toContain("access_token");
   expect(login.headers()["set-cookie"]).toContain("HttpOnly");
@@ -123,32 +122,23 @@ test("CSRF, allowlist, validation and actual body cap", async ({ request }) => {
   });
   expect(denied.status()).toBe(403);
 });
-test("JWT expiry denies private resources and clears cookie", async ({
-  page,
-  context,
-}) => {
-  const result = await context.request.post("/api/auth/login", {
-    headers: write,
-    data: { ...credentials, email: "short@example.com" },
-  });
+test("expired Access is recovered by refresh without a forced logout", async ({ page, context }) => {
+  const result = await apiLogin(context, "short@example.com");
   expect(result.status()).toBe(200);
+  const before = await result.json();
   await page.goto("/knowledge-bases");
-  await expect(page).toHaveURL(/knowledge-bases/);
-  await expect(page).toHaveURL(/login/, { timeout: 15000 });
-  const denied = await context.request.get("/api/auth/me");
-  expect(denied.status()).toBe(401);
-  expect(
-    (await context.cookies()).some((c) => c.name === "knowflow_session"),
-  ).toBeFalsy();
+  await expect(page).toHaveURL(/knowledge-bases$/);
+  await expect.poll(async () => (await (await context.request.get("/api/auth/me")).json()).expiresAt).toBeGreaterThan(before.expiresAt);
+  await page.reload();
+  await expect(page).toHaveURL(/knowledge-bases$/);
 });
-test("mock backend errors never expose internal details", async ({
-  request,
-}) => {
+test("mock backend errors never expose internal details", async ({ context }) => {
+  const request = context.request;
   test.skip(
     process.env.M51_REAL === "1",
     "Controlled fault injection only applies to mock backend",
   );
-  await request.post("/api/auth/login", { headers: write, data: credentials });
+  await apiLogin(context);
   for (const status of [403, 404, 409, 422, 503]) {
     const r = await request.post("/api/knowledge-bases", {
       headers: write,
@@ -160,18 +150,11 @@ test("mock backend errors never expose internal details", async ({
   }
 });
 
-test("stale tab cannot mutate a newly logged-in account", async ({
-  request,
-}) => {
-  const first = await request.post("/api/auth/login", {
-    headers: write,
-    data: credentials,
-  });
+test("stale tab cannot mutate a newly logged-in account", async ({ context }) => {
+  const request = context.request;
+  const first = await apiLogin(context);
   const user = (await first.json()).user;
-  await request.post("/api/auth/login", {
-    headers: write,
-    data: { ...credentials, email: "bob@example.com" },
-  });
+  await apiLogin(context, "bob@example.com");
   const name = "不得跨会话创建-" + Date.now();
   const response = await request.post("/api/knowledge-bases", {
     headers: { ...write, "X-KnowFlow-User": user.id },

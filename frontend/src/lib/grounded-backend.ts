@@ -1,5 +1,5 @@
 import "server-only";
-import { backendBase, body, checkWrite, json, me, SafeError, token } from "./backend";
+import { backendBase, body, checkWrite, json, me, sameIdentity, SafeError, token } from "./backend";
 import { uuid } from "./contracts";
 import { checkedAnswer, validQuestion } from "./grounded-contracts";
 
@@ -38,8 +38,7 @@ export async function askRoute(request: Request, parts: string[]) {
   const [kb,doc,ver] = [parts[1],parts[3],parts[5]];
   const bearer = await token();
   const user = await me(bearer);
-  const expected = request.headers.get("x-knowflow-user");
-  if (expected && expected !== user.id) throw new SafeError(409,"登录身份已变化，请刷新页面");
+  await sameIdentity(request, bearer);
   const data = await body(request,16 * 1024);
   if (Object.keys(data).join() !== "question" || !validQuestion(data.question))
     throw new SafeError(422,"问题不能为空，最多 1000 字符且 UTF-8 不超过 2000 字节");

@@ -1,6 +1,6 @@
 import "server-only";
 import { uuid } from "./contracts";
-import { backendBase, checkOrigin, fail, json, me, SafeError, token } from "./backend";
+import { backendBase, checkOrigin, fail, json, sameIdentity, SafeError, token } from "./backend";
 import { isDocument, isParse, isReceipt, isVersion, type DocumentItem, type DocumentVersion, type ParseStage, type IndexReceipt } from "./document-contracts";
 
 const MAX_UPLOAD_REQUEST = 11 * 1024 * 1024;
@@ -81,11 +81,6 @@ function page(request: Request) {
     throw new SafeError(422, "分页参数无效");
   return `?limit=${PAGE_SIZE}&offset=${offset}`;
 }
-async function sameUser(request: Request, bearer: string) {
-  const expected = request.headers.get("x-knowflow-user");
-  if (expected && (await me(bearer)).id !== expected)
-    throw new SafeError(409, "登录身份已变化，请刷新页面");
-}
 function versions(result: unknown, kb: string, doc: string): DocumentVersion[] {
   if (!Array.isArray(result) || result.length > PAGE_SIZE || !result.every(v => isVersion(v, kb, doc)))
     throw unavailable();
@@ -124,7 +119,7 @@ export async function documentRoute(request: Request, parts: string[]) {
   if (parts.length >= 6 && (parts[4] !== "versions" || !uuid.test(ver))) throw new SafeError(404, "接口不存在");
   if (request.method === "POST") checkOrigin(request);
   const bearer = await token();
-  await sameUser(request, bearer);
+  await sameIdentity(request, bearer);
   const base = `/knowledge-bases/${kb}/documents`;
   if (parts.length === 3 && request.method === "GET")
     return json(documents(await backend(base+page(request),bearer,"GET",10000),kb));

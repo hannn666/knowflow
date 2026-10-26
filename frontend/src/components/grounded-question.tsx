@@ -4,8 +4,10 @@ import { api, ClientError } from "@/lib/client";
 import type { DocumentVersion } from "@/lib/document-contracts";
 import { validQuestion, type GroundedAnswer } from "@/lib/grounded-contracts";
 
-export default function GroundedQuestion({ version, userId, externalBusy, onBusy }: {
-  version: DocumentVersion; userId: string; externalBusy: boolean;
+import type { BrowserSession } from "@/lib/session-contracts";
+
+export default function GroundedQuestion({ version, session, externalBusy, onBusy }: {
+  version: DocumentVersion; session: BrowserSession; externalBusy: boolean;
   onBusy: (versionId: string, pending: boolean) => void;
 }) {
   const [question,setQuestion] = useState("");
@@ -27,10 +29,10 @@ export default function GroundedQuestion({ version, userId, externalBusy, onBusy
     try {
       const answer = await api<GroundedAnswer>(
         `knowledge-bases/${version.knowledge_base_id}/documents/${version.document_id}/versions/${version.document_version_id}/ask`,
-        {question},userId,{timeoutMs:315000});
+        {question},session,{timeoutMs:315000});
       if (!active.current) return;
-      const current = await api<{user:{id:string}}>("auth/me");
-      if (current.user.id !== userId) { window.location.replace("/knowledge-bases"); return; }
+      const current = await api<BrowserSession>("auth/me", undefined, session);
+      if (current.user.id !== session.user.id || current.sessionId !== session.sessionId || current.slot !== session.slot) { window.location.replace("/knowledge-bases"); return; }
       if (active.current) setResult(answer);
     } catch (e) {
       if (active.current) {

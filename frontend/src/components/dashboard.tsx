@@ -2,14 +2,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/client";
-import type { KnowledgeBase, User } from "@/lib/contracts";
-export default function Dashboard({
-  user,
-  expiresAt,
-}: {
-  user: User;
-  expiresAt: number;
-}) {
+import type { KnowledgeBase } from "@/lib/contracts";
+import { watchSession } from "@/lib/session-client";
+import type { BrowserSession } from "@/lib/session-contracts";
+export default function Dashboard({ session }: { session: BrowserSession }) {
+  const user = session.user;
   const [items, setItems] = useState<KnowledgeBase[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -29,7 +26,7 @@ export default function Dashboard({
         const result = await api<KnowledgeBase[]>(
           `knowledge-bases?offset=${start}`,
           undefined,
-          user.id,
+          session,
         );
         if (current !== generation.current) return;
         setItems(result);
@@ -42,40 +39,19 @@ export default function Dashboard({
         if (current === generation.current) setLoading(false);
       }
     },
-    [user.id],
+    [session],
   );
   const invalidate = useCallback(() => {
     generation.current++;
   }, []);
   useEffect(() => {
     const initial = setTimeout(() => void load(), 0);
-    const timer = setTimeout(
-      () => window.location.replace("/login?expired=1"),
-      Math.max(0, expiresAt - Date.now()),
-    );
-    const validate = () => {
-      if (document.visibilityState === "visible")
-        void api<{ user: User }>("auth/me")
-          .then((s) => {
-            if (s.user.id !== user.id)
-              window.location.replace("/knowledge-bases");
-          })
-          .catch(() => {
-            setItems([]);
-            setDetail(null);
-            setError("无法确认登录状态，请刷新页面");
-          });
-    };
-    window.addEventListener("pageshow", validate);
-    document.addEventListener("visibilitychange", validate);
-    return () => {
-      clearTimeout(initial);
-      clearTimeout(timer);
-      invalidate();
-      window.removeEventListener("pageshow", validate);
-      document.removeEventListener("visibilitychange", validate);
-    };
-  }, [load, expiresAt, user.id, invalidate]);
+    const stop = watchSession(session, e => {
+      setItems([]); setDetail(null);
+      setError(e instanceof Error ? e.message : "Session unavailable");
+    });
+    return () => { clearTimeout(initial); stop(); invalidate(); };
+  }, [load, session, invalidate]);
   async function create(event: React.FormEvent) {
     event.preventDefault();
     if (pending.current) return;
@@ -83,7 +59,7 @@ export default function Dashboard({
     setCreating(true);
     setError("");
     try {
-      await api("knowledge-bases", { name }, user.id);
+      await api("knowledge-bases", { name }, session);
       setName("");
       setDetail(null);
       await load();
@@ -99,11 +75,11 @@ export default function Dashboard({
     pending.current = true;
     setError("");
     try {
-      await api("auth/logout", {});
+      await api("auth/logout", {}, session);
       setItems([]);
       window.location.replace("/login");
-    } catch {
-      setError("退出失败，请重试");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Session unavailable");
       pending.current = false;
     }
   }
@@ -112,7 +88,7 @@ export default function Dashboard({
     setError("");
     try {
       setDetail(
-        await api<KnowledgeBase>(`knowledge-bases/${id}`, undefined, user.id),
+        await api<KnowledgeBase>(`knowledge-bases/${id}`, undefined, session),
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "无法读取知识库");

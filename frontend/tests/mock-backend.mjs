@@ -1,6 +1,6 @@
 // Explicit HTTP mock for controlled failures; not a real FastAPI/SQL result.
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 if (process.env.KNOWFLOW_M51_FIXTURE !== "1")
   throw new Error("Fixture opt-in required");
 const users = Object.fromEntries(
@@ -18,6 +18,17 @@ const documents = [];
 const versions = [];
 const stages = new Map();
 const indexed = new Set();
+const sessions = new Map();
+const refreshTokens = new Map();
+function issue(family, short = false) {
+  const exp = Math.floor(Date.now() / 1000) + (short ? 4 : 900);
+  const raw = randomBytes(32).toString("base64url");
+  refreshTokens.set(raw, { sid: family.id, consumed: false });
+  return { access_token: "fixture." + Buffer.from(JSON.stringify({ sub: family.user.id, sid: family.id, exp })).toString("base64url") + ".signature",
+    refresh_token: raw, token_type: "bearer", expires_in: 900, session_id: family.id,
+    session_expires_at: new Date(family.absolute).toISOString(), idle_expires_at: new Date(family.idle).toISOString() };
+}
+const active = f => f && !f.revoked && Date.now() < f.absolute && Date.now() < f.idle;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1:8107");
   const send = (status, data) => {
@@ -34,25 +45,54 @@ const server = http.createServer(async (req, res) => {
     if (req.headers["content-type"]?.startsWith("application/json"))
       data = raw.length ? JSON.parse(raw.toString("utf8")) : {};
   } catch { return send(422, {}); }
+  // Controls exist ONLY in this explicitly opted-in loopback HTTP mock.
+  if (url.pathname === "/__fixture" && req.method === "POST") {
+    const f = sessions.get(data.sid);
+    if (!f) return send(404, {});
+    if (data.action === "expire_access") f.rejectAccess = true;
+    if (data.action === "idle") f.idle = Date.now() - 1;
+    if (data.action === "absolute") f.absolute = Date.now() - 1;
+    if (data.action === "revoke") f.revoked = true;
+    if (data.action === "refresh_503") f.refreshFailure = "before";
+    if (data.action === "refresh_commit_503") f.refreshFailure = "after";
+    if (data.action === "logout_503") f.logoutFailure = true;
+    if (data.action === "restore") { f.refreshFailure = undefined; f.logoutFailure = false; }
+    if (data.action === "delay") f.delay = data.ms;
+    if (data.action === "me_403") f.meFailure = 403;
+    if (data.action === "me_503") f.meFailure = 503;
+    return send(200, { refreshes: f.refreshes, logouts: f.logouts, writes: f.writes,
+      revoked: f.revoked, idle: f.idle, absolute: f.absolute });
+  }
   if (url.pathname === "/auth/login") {
     const user = users[data.email];
     if (!user || data.password !== "Fixture-only-password-123")
       return send(401, { detail: "private-password-sentinel" });
-    const exp =
-      Math.floor(Date.now() / 1000) +
-      (data.email.startsWith("short") ? 4 : 900);
-    return send(200, {
-      access_token:
-        "fixture." +
-        Buffer.from(JSON.stringify({ sub: user.id, exp })).toString(
-          "base64url",
-        ) +
-        ".signature",
-      token_type: "bearer",
-      expires_in: 900,
-    });
+    const family = { id: randomUUID(), user, absolute: Date.now() + 28800000, idle: Date.now() + 1800000,
+      refreshes: 0, logouts: 0, writes: 0, revoked: false };
+    sessions.set(family.id, family);
+    return send(200, issue(family, data.email.startsWith("short")));
   }
-  let user;
+  if (["/auth/refresh", "/auth/logout"].includes(url.pathname)) {
+    const old = refreshTokens.get(data.refresh_token);
+    const f = old && sessions.get(old.sid);
+    if (!f) return send(401, {});
+    if (url.pathname === "/auth/logout") {
+      f.logouts++;
+      if (f.logoutFailure) return send(503, { detail: "private-token-sentinel" });
+      f.revoked = true; res.writeHead(204); return res.end();
+    }
+    f.refreshes++;
+    if (f.delay) await new Promise(resolve => setTimeout(resolve, f.delay));
+    if (f.refreshFailure === "before") return send(503, {});
+    if (!active(f)) return send(401, {});
+    if (old.consumed) { f.revoked = true; return send(401, {}); }
+    old.consumed = true;
+    f.rejectAccess = false;
+    const result = issue(f);
+    if (f.refreshFailure === "after") return send(503, {});
+    return send(200, result);
+  }
+  let user, family;
   try {
     const claims = JSON.parse(
       Buffer.from(
@@ -60,16 +100,20 @@ const server = http.createServer(async (req, res) => {
         "base64url",
       ).toString(),
     );
-    if (claims.exp > Date.now() / 1000)
-      user = Object.values(users).find((u) => u.id === claims.sub);
+    family = sessions.get(claims.sid);
+    if (claims.exp > Date.now() / 1000 && active(family) && !family.rejectAccess && family.user.id === claims.sub)
+      user = family.user;
   } catch {}
   if (!user) return send(401, { detail: "private-token-sentinel" });
+  if (url.pathname === "/auth/me" && family.meFailure) return send(family.meFailure, {});
   if (url.pathname === "/auth/me")
     return send(200, {
       ...user,
       access_token: "private-token-sentinel",
       password_hash: "private-password-sentinel",
     });
+  family.idle = Math.min(Date.now() + 1800000, family.absolute);
+  if (req.method === "POST") family.writes++;
   if (url.pathname === "/knowledge-bases") {
     if (req.method === "POST") {
       if (data.name.startsWith("故障"))

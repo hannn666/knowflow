@@ -1,3 +1,4 @@
+import { apiLogin } from "./auth-helpers";
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { readFileSync } from "node:fs";
 const origin="http://127.0.0.1:3107";
@@ -116,7 +117,7 @@ test("an account change during an admitted ask never displays the old account an
   await setup(page,context);
   await page.route("**/api/knowledge-bases/*/documents/*/versions/*/ask",async r=>{
     const response=await r.fetch();
-    await context.request.post("/api/auth/login",{headers:{Origin:origin},data:{email:"bob@example.com",password:"Fixture-only-password-123"}});
+    await apiLogin(context, "bob@example.com");
     await r.fulfill({response});
   });
   await ask(page,"Apollo budget?");
@@ -126,7 +127,7 @@ test("an account change during an admitted ask never displays the old account an
 test("expired JWT during a slow response cannot release evidence",async ({page,context}) => {
   const {path}=await setup(page,context);
   await page.getByRole("button",{name:"退出登录"}).click(); await expect(page).toHaveURL(/login/);
-  await login(page,"short@example.com");
+  await apiLogin(context,"short@example.com");
   // This user needs its own source; the mock still enforces ownership.
   const kb=await context.request.post("/api/knowledge-bases",{headers:{Origin:origin},data:{name:"short QA"}});
   const id=(await kb.json()).id;
@@ -137,6 +138,6 @@ test("expired JWT during a slow response cannot release evidence",async ({page,c
   await context.request.post(own+"/index",{headers:{Origin:origin}});
   const r=await context.request.post(own+"/ask",{headers:{Origin:origin},data:{question:"slow session"}});
   expect(r.status()).toBe(401); expect(await r.text()).not.toContain("42 credits");
-  expect((await context.request.get("/api/auth/me")).status()).toBe(401);
+  expect((await (await context.request.get("/api/auth/me")).json()).state).toBe("refresh_required");
   expect((await context.request.post(path+"/ask",{headers:{Origin:origin},data:{question:"Apollo?"}})).status()).toBe(401);
 });
